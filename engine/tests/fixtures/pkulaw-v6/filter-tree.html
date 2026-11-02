@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN" data-pkulaw-profile="pkulaw-v6" data-fixture-scenario="filter-tree">
+<head><meta charset="utf-8"><title>真实树形筛选器</title></head>
+<body>
+  <input id="IsUserLogin" type="hidden" value="true">
+  <form id="main_form">
+    <input name="SearchKeywordType" type="hidden" value="Title">
+    <input name="Pager.PageIndex" type="hidden" value="0">
+    <input name="Pager.PageSize" type="hidden" value="20">
+    <input id="txtSearch" type="text">
+    <input id="accurate" type="radio" checked>
+    <a id="btnSearch" role="button">检索</a>
+  </form>
+  <ul id="subLibraries"><li><a library="chl">中央法规</a></li><li class="current"><a library="lar">地方法规</a></li></ul>
+  <div id="leftContent">
+    <section class="recursion-tree"><h4><a class="fold" searchname="IssueDate">公布年份</a></h4><ul class="list"><li><a class="level0" title="2024 (21)"><span class="node_name">2024 (21)</span></a></li></ul></section>
+    <section class="recursion-tree"><h4><a class="fold" searchname="IssueDepartment">制定机关</a></h4><ul class="list"><li><a class="level0" title="湖北省 (3)"><span class="node_name">湖北省 (3)</span></a></li></ul></section>
+    <section class="recursion-tree"><h4><a class="fold" searchname="TimelinessDic">时效性</a></h4><ul class="list"><li><a class="level0" title="现行有效 (3)"><span class="node_name">现行有效 (3)</span></a></li></ul></section>
+  </div>
+  <div id="rightContent">
+    <div class="list-wrap">
+      <div class="list-tool-wrap"><span class="total">共 3 篇</span></div>
+      <div class="accompanying-wrap">
+        <div class="item">
+          <div class="t">
+            <label name="sortNum">1.</label>
+            <input type="checkbox" name="recordList" value="filter-policy-001">
+            <h4><a href="/lar/filter-policy-001.html">筛选测试地方政策</a></h4>
+          </div>
+        </div>
+      </div>
+      <ul class="pagination pagination-sm"><li class="disabled"><label>页数 1/1</label></li></ul>
+    </div>
+  </div>
+</body>
+</html>

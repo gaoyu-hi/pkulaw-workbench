@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN" data-pkulaw-profile="pkulaw-v6" data-pkulaw-fixture="sanitized">
+<head>
+  <meta charset="utf-8">
+  <title>北大法宝 V6 多页结果脱敏夹具</title>
+</head>
+<body>
+  <input id="lIsLogin" type="hidden" value="1">
+  <div id="mainBody">
+    <form id="main_form" action="/law/chl" method="post">
+      <input name="SearchKeywordType" type="hidden" value="Title">
+      <input name="MatchType" type="hidden" value="Exact">
+      <div class="search-rect">
+        <input id="txtSearch" class="search-combox-input tt-input" type="text">
+        <input id="accurate" type="radio" name="Search_Mode" checked>
+        <a id="btnSearch" class="btn-search">检索</a>
+      </div>
+    </form>
+    <ul id="subLibraries" class="library-wrap"><li class="current"><a library="chl">中央法规</a></li></ul>
+    <div id="leftContent">
+      <div class="recursion-tree"><h4><a class="fold" searchname="IssueDate">公布年份</a></h4></div>
+      <div class="recursion-tree"><h4><a class="fold" searchname="TimelinessDic">时效性</a></h4></div>
+    </div>
+    <div id="rightContent">
+      <form id="right_form">
+        <input name="Pager.PageSize" type="hidden" value="2">
+        <input name="Pager.PageIndex" type="hidden" value="0">
+      </form>
+      <div class="list-wrap">
+        <div class="list-tool-wrap"><div class="filtrater-box"><span class="total">共6篇</span></div></div>
+        <div class="accompanying-wrap">
+          <div class="item">
+            <div class="t">
+              <label name="sortNum">1.</label>
+              <input type="checkbox" name="recordList" value="fixture-v6-page-001">
+              <h4><a href="/chl/fixture-v6-page-001.html">分页测试政策一</a></h4>
+            </div>
+            <div class="info"><a logfunc="题录-时效性">现行有效</a><a logfunc="题录-制定机关">测试机关</a><span class="text">测试发〔2026〕1号</span><span class="text">2026.01.01公布</span></div>
+          </div>
+          <div class="item">
+            <div class="t">
+              <label name="sortNum">2.</label>
+              <input type="checkbox" name="recordList" value="fixture-v6-page-002">
+              <h4><a href="/chl/fixture-v6-page-002.html">分页测试政策二</a></h4>
+            </div>
+            <div class="info"><a logfunc="题录-时效性">现行有效</a><a logfunc="题录-制定机关">测试机关</a><span class="text">测试发〔2026〕2号</span><span class="text">2026.01.02公布</span></div>
+          </div>
+        </div>
+        <nav class="pagination" data-page="1" data-total="3">
+          <a class="prev disabled" aria-disabled="true">上一页</a>
+          <span>页数 1 / 3</span>
+          <a class="next" href="?page=2">下一页</a>
+        </nav>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

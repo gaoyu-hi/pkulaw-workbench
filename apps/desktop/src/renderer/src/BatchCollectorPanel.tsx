@@ -1,0 +1,771 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  AppInfo,
+  BackendState,
+  BatchRecord,
+  BatchTaskDetails,
+  BrowserHostState,
+  EngineEvent,
+  PageSelection,
+  TaskPreviewSummary,
+  TaskRecord,
+  YearSelection
+} from "../../shared/protocol";
+import YearRangeControl, {
+  yearSelectionPayload
+} from "./YearRangeControl";
+import YearStatsTable from "./YearStatsTable";
+import PageLimitControl, {
+  pageSelectionPayload
+} from "./PageLimitControl";
+import {
+  PageLimitDecision,
+  ScaleDecisionPanel,
+  ScaleEstimateSummary
+} from "./TaskDecisionPanel";
+import { TaskPreviewCard } from "./TaskPreviewCard";
+import {
+  holdingTaskLabel,
+  leaseBlocksNewBrowserTask,
+  newOperationId
+} from "../../shared/browser-lease";
+import {
+  CATALOG_FORMAT_LABELS,
+  catalogFormatLabel
+} from "../../shared/catalog-formats";
+import {
+  BrowserLeaseCard,
+  ExpandableValue,
+  ScanContinuitySummary,
+  TaskRuntimePanel
+} from "./TaskRuntimePanel";
+import { useTaskRuntimeEvents } from "./useTaskRuntimeEvents";
+import {
+  TASK_STATUS_LABELS,
+  collectionActions,
+  progressSnapshotView,
+  retryActionLabel,
+  stageLabel
+} from "./task-presentation";
+import {
+  canStartCollector,
+  collectorFormKey,
+  defaultCollectorMatchMode
+} from "./collector-workflow";
+
+interface BatchCollectorPanelProps {
+  appInfo: AppInfo | null;
+  backend: BackendState;
+  onOpenBrowser: () => void;
+}
+
+const PROVINCES = [
+  "北京市", "天津市", "河北省", "山西省", "内蒙古自治区", "辽宁省", "吉林省",
+  "黑龙江省", "上海市", "江苏省", "浙江省", "安徽省", "福建省", "江西省",
+  "山东省", "河南省", "湖北省", "湖南省", "广东省", "广西壮族自治区", "海南省",
+  "重庆市", "四川省", "贵州省", "云南省", "西藏自治区", "陕西省", "甘肃省",
+  "青海省", "宁夏回族自治区", "新疆维吾尔自治区"
+];
+
+function formatTime(value: string | null): string {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+export default function BatchCollectorPanel({
+  appInfo,
+  backend,
+  onOpenBrowser
+}: BatchCollectorPanelProps): React.JSX.Element {
+  const [queries, setQueries] = useState("批量测试");
+  const matchMode = defaultCollectorMatchMode("batch");
+  const [library, setLibrary] = useState<"central" | "local" | "both">("central");
+  const [yearSelection, setYearSelection] = useState<YearSelection>({ mode: "all" });
+  const [province, setProvince] = useState("全部省份");
+  const [timeliness, setTimeliness] = useState("全部（仅记录元数据，不筛选）");
+  const [pageSize, setPageSize] = useState(50);
+  const [pageSelection, setPageSelection] = useState<PageSelection>({
+    mode: "last"
+  });
+  const [catalogFormat, setCatalogFormat] = useState<"xlsx" | "xls" | "html-xls">("xlsx");
+  const [outputDir, setOutputDir] = useState("");
+  const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [details, setDetails] = useState<BatchTaskDetails | null>(null);
+  const [browser, setBrowser] = useState<BrowserHostState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [preview, setPreview] = useState<TaskPreviewSummary | null>(null);
+  const [previewFormKey, setPreviewFormKey] = useState("");
+  const startInFlightRef = useRef(false);
+  const [notice, setNotice] = useState(
+    "批量任务会先确认页数和规模，再使用当前内置浏览器执行受控下载。"
+  );
+
+  useEffect(() => {
+    if (appInfo?.defaultBatchOutputDir) {
+      setOutputDir(appInfo.defaultBatchOutputDir);
+    }
+  }, [appInfo?.defaultBatchOutputDir]);
+
+  async function refreshTaskList(): Promise<TaskRecord[]> {
+    const records = (await window.pkulaw.listTasks(100)).filter(
+      (task) => task.mode === "batch"
+    );
+    setTasks(records);
+    return records;
+  }
+
+  async function loadDetails(taskId: string): Promise<void> {
+    if (!taskId) {
+      setDetails(null);
+      return;
+    }
+    const next = await window.pkulaw.getBatchTaskDetails(taskId);
+    setDetails(next);
+    setSelectedTaskId(taskId);
+  }
+
+  useEffect(() => {
+    if (backend.status !== "ready") {
+      return;
+    }
+    let cancelled = false;
+    void refreshTaskList()
+      .then(async (records) => {
+        if (!cancelled && records[0]) {
+          await loadDetails(records[0].id);
+        }
+      })
+      .catch((error) => setNotice(`读取批量任务失败：${String(error)}`));
+    return () => {
+      cancelled = true;
+    };
+  }, [backend.status]);
+
+  useEffect(() => {
+    if (backend.status !== "ready") return;
+    let cancelled = false;
+    void window.pkulaw
+      .getBrowserState()
+      .then((state) => {
+        if (!cancelled) setBrowser(state);
+      })
+      .catch(() => undefined);
+    const unsubscribe = window.pkulaw.onBrowserState((state) => {
+      if (!cancelled) setBrowser(state);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [backend.status]);
+
+  useEffect(() => {
+    const unsubscribe = window.pkulaw.onEngineEvent((event: EngineEvent) => {
+      if (backend.status !== "ready") return;
+      if (event.event.startsWith("batch.") || event.event.startsWith("task.")) {
+        void refreshTaskList().catch(() => undefined);
+        const data = event.data as Record<string, unknown>;
+        const taskId = String(
+          data.taskId ||
+          (data.task && typeof data.task === "object"
+            ? (data.task as Record<string, unknown>).id
+            : "") ||
+          ""
+        );
+        if (taskId) {
+          void loadDetails(taskId).catch(() => undefined);
+        } else if (selectedTaskId) {
+          void loadDetails(selectedTaskId).catch(() => undefined);
+        }
+      }
+    });
+    return unsubscribe;
+  }, [backend.status, selectedTaskId]);
+
+  useEffect(() => {
+    if (
+      !selectedTaskId ||
+      !details ||
+      backend.status !== "ready" ||
+      ![
+        "preflight",
+        "running",
+        "waiting_login",
+        "waiting_manual",
+        "verifying",
+        "pausing",
+        "paused",
+        "stopping"
+      ].includes(
+        details.task.status
+      )
+    ) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void loadDetails(selectedTaskId).catch(() => undefined);
+    }, 1200);
+    return () => window.clearInterval(timer);
+  }, [selectedTaskId, details?.task.status, backend.status]);
+
+  useEffect(() => {
+    if (!selectedTaskId && tasks[0]) {
+      void loadDetails(tasks[0].id).catch(() => undefined);
+    }
+  }, [selectedTaskId, tasks]);
+
+  const completedBatches = useMemo(
+    () => details?.batches.filter((batch) => batch.status === "completed").length || 0,
+    [details]
+  );
+  const progressView = details
+    ? progressSnapshotView({
+        status: details.task.status,
+        progress: details.task.progress,
+        currentStage: details.task.currentStage,
+        progressSnapshot: details.task.progressSnapshot,
+        completed: completedBatches,
+        total: details.batches.length
+      })
+    : null;
+  const failedBatches = details?.batches.filter(
+    (batch) => batch.status === "failed"
+  ).length || 0;
+  const pageLimitWaiting =
+    details?.task.status === "waiting_manual" &&
+    details.task.error?.code === "PAGE_LIMIT_REACHED";
+  const scaleWaiting =
+    details?.task.status === "waiting_manual" &&
+    details.task.error?.code === "BATCH_SCALE_CONFIRMATION_REQUIRED";
+  const browserLeaseBlocked = leaseBlocksNewBrowserTask(browser);
+  const actionPolicy = collectionActions(details?.task || null, {
+    failedItems: failedBatches
+  });
+  const retryLabel = retryActionLabel(details?.task || null);
+  const runtimeAlerts = useTaskRuntimeEvents(
+    details?.task.id || selectedTaskId
+  );
+  const previewInput = useMemo(() => {
+    const lines = queries
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    return {
+      queries: lines,
+      keywords: lines,
+      matchMode,
+      library,
+      ...yearSelectionPayload(yearSelection),
+      province,
+      timeliness,
+      pageSize,
+      ...pageSelectionPayload(pageSelection)
+    };
+  }, [
+    queries,
+    matchMode,
+    library,
+    yearSelection,
+    province,
+    timeliness,
+    pageSize,
+    pageSelection
+  ]);
+  const currentPreviewFormKey = collectorFormKey("batch", previewInput);
+  const previewFresh =
+    Boolean(preview) && previewFormKey === currentPreviewFormKey;
+  const startAllowed = canStartCollector({
+    preview,
+    previewFormKey,
+    currentFormKey: currentPreviewFormKey,
+    busy: busy || previewBusy,
+    backendReady: backend.status === "ready",
+    browserLeaseBlocked
+  });
+
+  async function previewCollector(): Promise<void> {
+    if (previewBusy) return;
+    if (!previewInput.queries.length) {
+      setNotice("批量关键词检索至少需要一个关键词。");
+      return;
+    }
+    if (
+      yearSelection.mode === "range" &&
+      yearSelection.startYear > yearSelection.endYear
+    ) {
+      setNotice("起始年份不能晚于结束年份。");
+      return;
+    }
+    setPreviewBusy(true);
+    try {
+      const browserState = await window.pkulaw.getBrowserState();
+      setBrowser(browserState);
+      if (
+        !browserState.targetBound ||
+        !browserState.authenticated ||
+        !browserState.selectorReady
+      ) {
+        setPreview(null);
+        setNotice(
+          `预览门禁未通过：${browserState.selectorMessage || "请先打开已登录的北大法宝检索页"}`
+        );
+        return;
+      }
+      if (leaseBlocksNewBrowserTask(browserState)) {
+        setPreview(null);
+        setNotice(holdingTaskLabel(browserState, tasks));
+        return;
+      }
+      const result = await window.pkulaw.previewTask("batch", previewInput);
+      setPreview(result);
+      setPreviewFormKey(currentPreviewFormKey);
+      setNotice(
+        `预览完成：${result.combinationCount} 个组合，${result.totalResults} 条结果，${result.totalPages} 页，预计 ${result.estimatedBatches50} 个 50 条批次，下载 0。${
+          result.windowStatus === "probe_required"
+            ? "检测到结果窗口限制，启动后会先进行 0 下载探测。"
+            : ""
+        }`
+      );
+    } catch (error) {
+      setPreview(null);
+      setPreviewFormKey("");
+      setNotice(`预览失败，未启动任务：${String(error)}`);
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
+
+  async function createAndStart(): Promise<void> {
+    const lines = queries
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (!lines.length || !outputDir.trim()) {
+      setNotice("请填写检索关键词和输出目录。");
+      return;
+    }
+    if (!previewFresh || !preview) {
+      setNotice("请先完成 0 下载预览；修改条件后需要重新预览。");
+      return;
+    }
+    if (
+      yearSelection.mode === "range" &&
+      yearSelection.startYear > yearSelection.endYear
+    ) {
+      setNotice("起始年份不能晚于结束年份。");
+      return;
+    }
+    if (startInFlightRef.current) return;
+    startInFlightRef.current = true;
+    setBusy(true);
+    const operationId = newOperationId();
+    try {
+      const browserState = await window.pkulaw.getBrowserState();
+      setBrowser(browserState);
+      if (
+        !browserState.targetBound ||
+        !browserState.authenticated ||
+        !browserState.selectorReady
+      ) {
+        setNotice(
+          `任务启动门禁未通过：${browserState.selectorMessage || "请先打开已登录的北大法宝检索页"}`
+        );
+        onOpenBrowser();
+        return;
+      }
+      if (leaseBlocksNewBrowserTask(browserState)) {
+        setNotice(holdingTaskLabel(browserState, tasks));
+        return;
+      }
+      const task = await window.pkulaw.createTask({
+        name: `批量采集 ${new Date().toLocaleString("zh-CN")}`,
+        mode: "batch",
+        outputDir: outputDir.trim(),
+        input: {
+          queries: lines,
+          keywords: lines,
+          matchMode,
+          library,
+          ...yearSelectionPayload(yearSelection),
+          province,
+          timeliness,
+          pageSize,
+          ...pageSelectionPayload(pageSelection),
+          catalogFormat,
+          fullFormat: "docx",
+          outputDir: outputDir.trim(),
+          previewSnapshot: preview
+        },
+        operationId
+      });
+      setDetails(await window.pkulaw.startBatchTask(task.id, operationId));
+      setSelectedTaskId(task.id);
+      await refreshTaskList();
+      setNotice("批量任务已启动，单批最多 50 条。");
+    } catch (error) {
+      setNotice(`启动批量任务失败：${String(error)}`);
+    } finally {
+      startInFlightRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function control(
+    action:
+      | "pause"
+      | "resume"
+      | "stop"
+      | "continue"
+      | "continueToLast"
+      | "confirmScale"
+      | "retry"
+  ): Promise<void> {
+    if (!selectedTaskId) return;
+    setBusy(true);
+    try {
+      if (action === "pause") {
+        setDetails(await window.pkulaw.pauseBatchTask(selectedTaskId));
+        setNotice("已请求暂停，将在当前页读取或批次下载与校验完成后生效。");
+      } else if (action === "resume") {
+        setDetails(
+          await window.pkulaw.resumeBatchTask(
+            selectedTaskId,
+            newOperationId()
+          )
+        );
+        setNotice("浏览器、登录和选择器已重新核验，批量任务从原断点继续。");
+      } else if (action === "stop") {
+        setDetails(await window.pkulaw.stopBatchTask(selectedTaskId));
+        setNotice("已请求停止，已验收批次和失败断点会保留。");
+      } else if (action === "retry") {
+        setDetails(
+          await window.pkulaw.retryBatchTask(
+            selectedTaskId,
+            newOperationId()
+          )
+        );
+        setNotice(
+          details?.task.checkpoint.scanCompleted === true
+            ? "扫描已完成，只重试失败批次；已完成批次不会重下。"
+            : "已从批量扫描日志断点继续；已完成组合和页不会重复扫描。"
+        );
+      } else if (action === "continueToLast") {
+        setDetails(await window.pkulaw.continueBatchToLast(selectedTaskId));
+        setNotice("已确认后续检索组合扫描到尾页，分页模式将持久保存。");
+      } else if (action === "confirmScale") {
+        setDetails(await window.pkulaw.confirmBatchScale(selectedTaskId));
+        setNotice("批量规模已确认，将仅在全部搜索完成后创建和下载批次。");
+      } else {
+        if (browser?.captchaVisible) {
+          try {
+            setBrowser(await window.pkulaw.browserContinue());
+          } catch (error) {
+            setNotice(`验证码尚未清除：${String(error)}`);
+            return;
+          }
+        }
+        setDetails(await window.pkulaw.continueBatchTask(selectedTaskId));
+        setNotice("人工处理已确认，批量任务继续。");
+      }
+      await refreshTaskList();
+    } catch (error) {
+      setNotice(`批量任务操作失败：${String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="batch-workspace">
+      <div className="batch-layout">
+        <aside className="batch-form-card">
+          <span className="eyebrow">批量采集</span>
+          <h2>创建批量任务</h2>
+          <p>每批最多 50 条，需要目录与 Word ZIP 全部通过校验。</p>
+          <label>
+            批量关键词（每行一个，固定使用全文/关键词字段）
+            <textarea value={queries} onChange={(event) => setQueries(event.target.value)} rows={4} />
+          </label>
+          <div className="form-columns">
+            <div className="collector-mode-fixed">
+              <strong>固定使用关键词检索</strong>
+              <span>标题精确匹配只用于逐篇任务，不会在批量模式中冒充关键词。</span>
+            </div>
+            <label>
+              法规子库
+              <select value={library} onChange={(event) => setLibrary(event.target.value as "central" | "local" | "both")}>
+                <option value="central">中央法规</option>
+                <option value="local">地方法规</option>
+                <option value="both">中央 + 地方</option>
+              </select>
+            </label>
+          </div>
+          <div className="form-columns year-and-province">
+            <YearRangeControl
+              value={yearSelection}
+              onChange={setYearSelection}
+            />
+            <label>
+              省份
+              <select value={province} onChange={(event) => setProvince(event.target.value)}>
+                <option>全部省份</option>
+                {PROVINCES.map((value) => <option key={value}>{value}</option>)}
+              </select>
+            </label>
+          </div>
+          <label>
+            时效性
+            <select value={timeliness} onChange={(event) => setTimeliness(event.target.value)}>
+              <option>全部（仅记录元数据，不筛选）</option>
+              <option>现行有效</option>
+              <option>已被修改</option>
+              <option>已废止</option>
+            </select>
+          </label>
+          <div className="form-columns">
+            <label>
+              每页条数
+              <select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))}>
+                {[10, 20, 50, 100].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
+          </div>
+          <PageLimitControl
+            value={pageSelection}
+            onChange={setPageSelection}
+          />
+          <button
+            type="button"
+            className="secondary-button collector-preview-button"
+            disabled={
+              busy ||
+              previewBusy ||
+              backend.status !== "ready" ||
+              browserLeaseBlocked
+            }
+            onClick={() => void previewCollector()}
+            data-testid="collector-preview-button"
+          >
+            {previewBusy ? "正在预览…" : "预览（0 下载）"}
+          </button>
+          <TaskPreviewCard preview={preview} fresh={previewFresh} />
+          {!previewFresh && (
+            <p className="collector-start-hint">
+              请先完成 0 下载预览；修改关键词、筛选、页大小或分页后需重新预览。
+            </p>
+          )}
+          <div className="form-columns">
+            <label>
+              目录格式
+              <select value={catalogFormat} onChange={(event) => setCatalogFormat(event.target.value as "xlsx" | "xls" | "html-xls")}>
+                <option value="xlsx">{CATALOG_FORMAT_LABELS.xlsx}</option>
+                <option value="xls">{CATALOG_FORMAT_LABELS.xls}</option>
+                <option value="html-xls">{CATALOG_FORMAT_LABELS["html-xls"]}</option>
+              </select>
+            </label>
+            <label>
+              全文格式
+              <select value="docx" disabled><option value="docx">Word ZIP</option></select>
+            </label>
+          </div>
+          <label>
+            输出目录
+            <div className="path-input-row">
+              <input value={outputDir} onChange={(event) => setOutputDir(event.target.value)} />
+              <button
+                type="button"
+                className="secondary-button compact"
+                onClick={() =>
+                  void window.pkulaw
+                    .selectOutputDirectory(outputDir)
+                    .then((selected) => selected && setOutputDir(selected))
+                }
+              >
+                浏览
+              </button>
+            </div>
+          </label>
+          <button
+            type="button"
+            className="primary-button"
+            disabled={busy || previewBusy || !startAllowed}
+            onClick={() => void createAndStart()}
+          >
+            创建并开始批量采集
+          </button>
+          {browser && (
+            <div data-testid="browser-lease-note">
+              <BrowserLeaseCard
+                browser={browser}
+                tasks={tasks}
+                compact
+              />
+            </div>
+          )}
+          <button type="button" className="secondary-button batch-browser" onClick={onOpenBrowser}>
+            打开内置浏览器处理登录
+          </button>
+          <div className="single-fixture-note">
+            <strong>{appInfo?.stage4FixtureMode ? "阶段 4 本地夹具" : "正式机构入口"}</strong>
+            <span>批次失败只影响本批；已验收 ZIP/目录不覆盖。</span>
+          </div>
+        </aside>
+
+        <div className="batch-main">
+          <div className="single-task-list batch-task-list">
+            <div className="panel-heading">
+              <div>
+                <span className="eyebrow">任务记录</span>
+                <h3>批量任务</h3>
+              </div>
+              <button type="button" className="text-button" onClick={() => void refreshTaskList()}>刷新</button>
+            </div>
+            <div className="single-task-tabs">
+              {tasks.slice(0, 8).map((task) => (
+                <button
+                  type="button"
+                  key={task.id}
+                  className={selectedTaskId === task.id ? "selected" : ""}
+                  onClick={() => void loadDetails(task.id)}
+                >
+                  <span>{task.name}</span>
+                  <small>{TASK_STATUS_LABELS[task.status]}</small>
+                </button>
+              ))}
+              {tasks.length === 0 && <div className="muted">暂无批量任务</div>}
+            </div>
+          </div>
+
+          {details ? (
+            <div className="batch-run-card">
+              <div className="single-run-heading">
+                <div>
+                  <span className={`task-status ${details.task.status}`}>
+                    {TASK_STATUS_LABELS[details.task.status]}
+                  </span>
+                  <h2>{details.task.name}</h2>
+                  <p>{stageLabel(details.task.currentStage, String(details.task.checkpoint.currentAction || ""))} · {formatTime(details.task.updatedAt)}</p>
+                </div>
+                <div className="single-run-actions">
+                  {actionPolicy.pause && (
+                    <button type="button" className="secondary-button" disabled={busy} onClick={() => void control("pause")}>暂停</button>
+                  )}
+                  {actionPolicy.resume && (
+                    <button type="button" className="primary-button compact" disabled={busy} onClick={() => void control("resume")}>继续</button>
+                  )}
+                  {actionPolicy.stop && (
+                    <button type="button" className="secondary-button" disabled={busy} onClick={() => void control("stop")}>停止</button>
+                  )}
+                  {actionPolicy.continueToLast && (
+                    <button type="button" className="primary-button compact" disabled={busy} onClick={() => void control("continueToLast")}>继续到尾页</button>
+                  )}
+                  {actionPolicy.continue && (
+                    <button type="button" className="primary-button compact" disabled={busy || Boolean(browser?.captchaVisible)} onClick={() => void control("continue")}>已处理，继续</button>
+                  )}
+                  {actionPolicy.retry && (
+                    <button type="button" className="primary-button compact" disabled={busy} onClick={() => void control("retry")}>{retryLabel}</button>
+                  )}
+                  {details.task.status === "stopping" && (
+                    <span className="task-control-note">正在等待当前安全步骤结束</span>
+                  )}
+                </div>
+              </div>
+              <div className="single-progress">
+                <div><span style={{ width: `${progressView?.percent || 0}%` }} /></div>
+                <strong>{progressView?.percent || 0}%</strong>
+                <small>{completedBatches}/{details.batches.length} 批</small>
+              </div>
+              <YearStatsTable stats={details.task.checkpoint.yearStats} />
+              <ScanContinuitySummary checkpoint={details.task.checkpoint} />
+              {Boolean(details.task.checkpoint.scaleEstimate) &&
+                typeof details.task.checkpoint.scaleEstimate === "object" && (
+                  <ScaleEstimateSummary checkpoint={details.task.checkpoint} />
+                )}
+              {pageLimitWaiting && (
+                <PageLimitDecision checkpoint={details.task.checkpoint} />
+              )}
+              {scaleWaiting && (
+                <ScaleDecisionPanel
+                  checkpoint={details.task.checkpoint}
+                  busy={busy}
+                  onConfirm={() => void control("confirmScale")}
+                />
+              )}
+              <TaskRuntimePanel
+                task={details.task}
+                completed={completedBatches}
+                total={details.batches.length}
+                browserCaptchaVisible={Boolean(browser?.captchaVisible)}
+                browserCaptchaCheckedAt={browser?.captchaCheckedAt}
+                browserCaptchaSelector={browser?.captchaSelector}
+                alerts={runtimeAlerts}
+              />
+              <div className="batch-table">
+                <div className="batch-head">
+                  <span>批次</span><span>页/序号</span><span>政策数</span><span>目录</span><span>ZIP</span><span>状态</span>
+                </div>
+                {details.batches.map((batch) => (
+                  <BatchRow key={batch.id} batch={batch} />
+                ))}
+                {details.batches.length === 0 && <div className="muted">正在检索并准备批次…</div>}
+              </div>
+            </div>
+          ) : (
+            <div className="single-empty batch-empty">
+              <div className="single-empty-mark">批</div>
+              <h3>准备批量采集</h3>
+              <p>目录与 ZIP 会在验证通过后进入正式目录。</p>
+            </div>
+          )}
+
+          <div className="notice browser-notice">
+            <span className="notice-icon">i</span>
+            <span>{notice}</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BatchRow({ batch }: { batch: BatchRecord }): React.JSX.Element {
+  const name = (path: string): string =>
+    path ? String(path).split(/[\\/]/).pop() || "—" : "—";
+  return (
+    <div className="batch-record">
+      <div className="batch-row">
+        <div>
+          <strong>{batch.library === "central" ? "中央" : "地方"} · {catalogFormatLabel(batch.catalogFormat)}</strong>
+          <small>{batch.query}</small>
+        </div>
+        <span>{batch.page} / {batch.rowStart}-{batch.rowEnd}</span>
+        <span>{batch.selected.length}</span>
+        <span title={batch.catalogPath}>{name(batch.catalogPath)}</span>
+        <span title={batch.zipPath}>{name(batch.zipPath)}</span>
+        <span className={`item-state ${batch.status}`}>{stageLabel(batch.status)}</span>
+      </div>
+      {batch.error && (
+        <ExpandableValue
+          label="批次错误"
+          value={[
+            `${batch.error.code}: ${batch.error.message}`,
+            batch.error.details
+              ? `详细信息：${JSON.stringify(batch.error.details, null, 2)}`
+              : ""
+          ].filter(Boolean).join("\n")}
+        />
+      )}
+      <ExpandableValue
+        label="目录、ZIP 与报告"
+        value={`目录：${batch.catalogPath || "未登记"}\nZIP：${batch.zipPath || "未登记"}\n报告：${batch.reportPath || "未登记"}`}
+      />
+    </div>
+  );
+}

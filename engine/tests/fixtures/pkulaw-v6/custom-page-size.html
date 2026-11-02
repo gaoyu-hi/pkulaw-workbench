@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN" data-pkulaw-profile="pkulaw-v6" data-fixture-scenario="custom-page-size">
+<head><meta charset="utf-8"><title>自定义每页条数</title></head>
+<body>
+  <input id="IsUserLogin" type="hidden" value="true">
+  <form id="main_form">
+    <input name="SearchKeywordType" type="hidden" value="Title">
+    <input name="Pager.PageIndex" type="hidden" value="0">
+    <input name="Pager.PageSize" type="hidden" value="20">
+    <input id="txtSearch" type="text">
+    <input id="accurate" type="radio" checked>
+    <a id="btnSearch" role="button">检索</a>
+  </form>
+  <ul id="subLibraries"><li class="current"><a library="chl">中央法规</a></li></ul>
+  <div id="leftContent"></div>
+  <div id="rightContent">
+    <div class="list-wrap">
+      <div class="list-tool-wrap">
+        <span class="total">共 94 篇</span>
+        <div class="articleSelect" data-current-size="20">
+          <h4>20 条/页</h4>
+          <div id="recordPage" class="drop-wrap">
+            <dl>
+              <dd>10 条/页</dd>
+              <dd class="currentSelect">20 条/页</dd>
+              <dd>50 条/页</dd>
+              <dd>100 条/页</dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+      <div class="accompanying-wrap">
+        <div class="item">
+          <div class="t">
+            <label name="sortNum">1.</label>
+            <input type="checkbox" name="recordList" value="page-size-001">
+            <h4><a href="/chl/page-size-001.html">分页条数测试政策</a></h4>
+          </div>
+        </div>
+      </div>
+      <ul class="pagination pagination-sm"><li class="disabled"><label>页数 1/5</label></li></ul>
+    </div>
+  </div>
+</body>
+</html>

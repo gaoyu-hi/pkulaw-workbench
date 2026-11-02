@@ -1,0 +1,44 @@
+{
+  "name": "@pkulaw/desktop",
+  "version": "0.2.2",
+  "private": true,
+  "description": "Pkulaw Electron desktop workbench",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "pnpm build && node scripts/launch.mjs --stage6",
+    "dev:stage6": "pnpm build && node scripts/launch.mjs --stage6",
+    "dev:stage5": "pnpm build && node scripts/launch.mjs --stage5",
+    "dev:stage4": "pnpm build && node scripts/launch.mjs --stage4",
+    "dev:stage3": "pnpm build && node scripts/launch.mjs --stage3",
+    "dev:stage2": "pnpm build && node scripts/launch.mjs --stage2",
+    "dev:hot": "electron-vite dev",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "build": "pnpm typecheck && electron-vite build",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "smoke": "pnpm smoke:stage2 && pnpm smoke:stage3 && pnpm smoke:stage4 && pnpm smoke:stage5 && pnpm smoke:stage6",
+    "smoke:stage2": "pnpm build && node scripts/smoke.mjs --mode stage2",
+    "smoke:stage3": "pnpm build && node scripts/smoke.mjs --mode stage3",
+    "smoke:stage4": "pnpm build && node scripts/smoke.mjs --mode stage4",
+    "smoke:stage5": "pnpm build && node scripts/smoke.mjs --mode stage5",
+    "smoke:stage6": "pnpm build && node scripts/smoke.mjs --mode stage6"
+  },
+  "dependencies": {
+    "fflate": "0.8.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@swc/core": "1.16.21",
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react-swc": "4.3.3",
+    "@vitest/coverage-v8": "5.0.5",
+    "electron": "45.2.1",
+    "electron-vite": "6.0.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}

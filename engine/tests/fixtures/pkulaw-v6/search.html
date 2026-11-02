@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN" data-pkulaw-profile="pkulaw-v6" data-pkulaw-fixture="sanitized">
+<head>
+  <meta charset="utf-8">
+  <title>北大法宝 V6 搜索页脱敏夹具</title>
+</head>
+<body>
+  <input id="lIsLogin" type="hidden" value="1">
+  <input id="IsUserLogin" type="hidden" value="true">
+  <div id="mainBody">
+    <form id="main_form" action="/law/chl" method="post">
+      <input name="SearchKeywordType" type="hidden" value="Title">
+      <input name="MatchType" type="hidden" value="Exact">
+      <input name="Library" type="hidden" value="chl">
+      <div class="search-rect">
+        <div class="search-panel">
+          <input id="txtSearch" class="search-combox-input tt-input" type="text" placeholder="生态环境法典">
+        </div>
+        <div class="mselect search-form">
+          <input id="accurate" type="radio" name="Search_Mode" checked>
+          <input id="like" type="radio" name="Search_Mode">
+        </div>
+        <a id="btnSearch" class="btn-search" href="javascript:void(0)">检索</a>
+      </div>
+    </form>
+    <div id="subLibContent">
+      <ul id="subLibraries" class="library-wrap">
+        <li class="current"><a library="chl">中央法规</a></li>
+        <li><a library="lar">地方法规</a></li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
