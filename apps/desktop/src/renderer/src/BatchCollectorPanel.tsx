@@ -52,6 +52,7 @@ import {
   collectorFormKey,
   defaultCollectorMatchMode
 } from "./collector-workflow";
+import { usePersistentState } from "./usePersistentState";
 
 interface BatchCollectorPanelProps {
   appInfo: AppInfo | null;
@@ -82,18 +83,43 @@ export default function BatchCollectorPanel({
   backend,
   onOpenBrowser
 }: BatchCollectorPanelProps): React.JSX.Element {
-  const [queries, setQueries] = useState("批量测试");
+  const [queries, setQueries] = usePersistentState(
+    "pkulaw.collector.batch.v1.queries",
+    ""
+  );
   const matchMode = defaultCollectorMatchMode("batch");
-  const [library, setLibrary] = useState<"central" | "local" | "both">("central");
-  const [yearSelection, setYearSelection] = useState<YearSelection>({ mode: "all" });
-  const [province, setProvince] = useState("全部省份");
-  const [timeliness, setTimeliness] = useState("全部（仅记录元数据，不筛选）");
-  const [pageSize, setPageSize] = useState(50);
-  const [pageSelection, setPageSelection] = useState<PageSelection>({
-    mode: "last"
-  });
-  const [catalogFormat, setCatalogFormat] = useState<"xlsx" | "xls" | "html-xls">("xlsx");
-  const [outputDir, setOutputDir] = useState("");
+  const [library, setLibrary] = usePersistentState<
+    "central" | "local" | "both"
+  >("pkulaw.collector.batch.v1.library", "central");
+  const [yearSelection, setYearSelection] =
+    usePersistentState<YearSelection>(
+      "pkulaw.collector.batch.v1.yearSelection",
+      { mode: "all" }
+    );
+  const [province, setProvince] = usePersistentState(
+    "pkulaw.collector.batch.v1.province",
+    "全部省份"
+  );
+  const [timeliness, setTimeliness] = usePersistentState(
+    "pkulaw.collector.batch.v1.timeliness",
+    "全部（仅记录元数据，不筛选）"
+  );
+  const [pageSize, setPageSize] = usePersistentState(
+    "pkulaw.collector.batch.v1.pageSize",
+    50
+  );
+  const [pageSelection, setPageSelection] =
+    usePersistentState<PageSelection>(
+      "pkulaw.collector.batch.v1.pageSelection",
+      { mode: "last" }
+    );
+  const [catalogFormat, setCatalogFormat] = usePersistentState<
+    "xlsx" | "xls" | "html-xls"
+  >("pkulaw.collector.batch.v1.catalogFormat", "xlsx");
+  const [outputDir, setOutputDir] = usePersistentState(
+    "pkulaw.collector.batch.v1.outputDir",
+    ""
+  );
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [details, setDetails] = useState<BatchTaskDetails | null>(null);
@@ -109,7 +135,9 @@ export default function BatchCollectorPanel({
 
   useEffect(() => {
     if (appInfo?.defaultBatchOutputDir) {
-      setOutputDir(appInfo.defaultBatchOutputDir);
+      setOutputDir(
+        (current) => current.trim() || appInfo.defaultBatchOutputDir
+      );
     }
   }, [appInfo?.defaultBatchOutputDir]);
 

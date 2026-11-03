@@ -45,6 +45,7 @@ import {
   collectorFormKey,
   defaultCollectorMatchMode
 } from "./collector-workflow";
+import { usePersistentState } from "./usePersistentState";
 
 interface SingleCollectorPanelProps {
   appInfo: AppInfo | null;
@@ -90,19 +91,43 @@ export default function SingleCollectorPanel({
   backend,
   onOpenBrowser
 }: SingleCollectorPanelProps): React.JSX.Element {
-  const [queries, setQueries] = useState("同名政策");
-  const [matchMode, setMatchMode] = useState<"keyword" | "title">(
+  const [queries, setQueries] = usePersistentState(
+    "pkulaw.collector.single.v1.queries",
+    ""
+  );
+  const [matchMode, setMatchMode] = usePersistentState<"keyword" | "title">(
+    "pkulaw.collector.single.v1.matchMode",
     defaultCollectorMatchMode("single")
   );
-  const [library, setLibrary] = useState<"central" | "local" | "both">("both");
-  const [yearSelection, setYearSelection] = useState<YearSelection>({ mode: "all" });
-  const [province, setProvince] = useState("全部省份");
-  const [timeliness, setTimeliness] = useState("全部（仅记录元数据，不筛选）");
-  const [pageSize, setPageSize] = useState(20);
-  const [pageSelection, setPageSelection] = useState<PageSelection>({
-    mode: "last"
-  });
-  const [outputDir, setOutputDir] = useState("");
+  const [library, setLibrary] = usePersistentState<
+    "central" | "local" | "both"
+  >("pkulaw.collector.single.v1.library", "both");
+  const [yearSelection, setYearSelection] =
+    usePersistentState<YearSelection>(
+      "pkulaw.collector.single.v1.yearSelection",
+      { mode: "all" }
+    );
+  const [province, setProvince] = usePersistentState(
+    "pkulaw.collector.single.v1.province",
+    "全部省份"
+  );
+  const [timeliness, setTimeliness] = usePersistentState(
+    "pkulaw.collector.single.v1.timeliness",
+    "全部（仅记录元数据，不筛选）"
+  );
+  const [pageSize, setPageSize] = usePersistentState(
+    "pkulaw.collector.single.v1.pageSize",
+    20
+  );
+  const [pageSelection, setPageSelection] =
+    usePersistentState<PageSelection>(
+      "pkulaw.collector.single.v1.pageSelection",
+      { mode: "last" }
+    );
+  const [outputDir, setOutputDir] = usePersistentState(
+    "pkulaw.collector.single.v1.outputDir",
+    ""
+  );
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [details, setDetails] = useState<TaskDetails | null>(null);
@@ -118,7 +143,9 @@ export default function SingleCollectorPanel({
 
   useEffect(() => {
     if (appInfo?.defaultSingleOutputDir) {
-      setOutputDir(appInfo.defaultSingleOutputDir);
+      setOutputDir(
+        (current) => current.trim() || appInfo.defaultSingleOutputDir
+      );
     }
   }, [appInfo?.defaultSingleOutputDir]);
 

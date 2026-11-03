@@ -168,6 +168,39 @@ class PkulawAdapter:
         with self.bridge.transaction() as tab:
             return self._diagnose_current_page(tab)
 
+    def diagnose_current_page_stable(
+        self,
+        *,
+        timeout_seconds: float = 5.0,
+    ) -> dict[str, Any]:
+        diagnostics = self.diagnose_current_page()
+        if (
+            not diagnostics.get("detected")
+            or diagnostics.get("pageKind") != "results"
+            or diagnostics.get("ready")
+        ):
+            return diagnostics
+        result_controls = {
+            "resultLink",
+            "resultNumber",
+            "batchCheckbox",
+            "resultCount",
+        }
+        if not result_controls.intersection(
+            diagnostics.get("missingControls") or []
+        ):
+            return diagnostics
+        try:
+            return diagnose_for_operation(
+                self.diagnose_current_page,
+                "select-batch",
+                timeout_seconds=timeout_seconds,
+                interval_seconds=0.25,
+                stable_samples=2,
+            )
+        except SelectorProfileError:
+            return self.diagnose_current_page()
+
     def audit_current_page(self) -> dict[str, Any]:
         with self.bridge.transaction() as tab:
             diagnostics = self._diagnose_current_page(tab)

@@ -6,7 +6,7 @@ from typing import Any, Iterable
 
 from ..storage import ValidationError
 
-MIN_YEAR = 2000
+MIN_YEAR = 1949
 ALL_YEARS_LABEL = "全部年份"
 
 

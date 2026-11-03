@@ -149,6 +149,62 @@ class PkulawAdapterDiagnosticTests(unittest.TestCase):
             with self.assertRaises(SelectorProfileMismatch):
                 self.adapter._ensure_operation_ready("search")
 
+    def test_selector_diagnostics_waits_for_transient_results_controls(
+        self,
+    ) -> None:
+        missing = {
+            "profileId": "pkulaw-v6",
+            "version": "v1",
+            "detected": True,
+            "ready": False,
+            "pageKind": "results",
+            "pageReady": False,
+            "missingControls": [
+                "resultLink",
+                "resultNumber",
+                "batchCheckbox",
+                "resultCount",
+            ],
+            "controls": {
+                "resultsRoot": {"ok": True},
+                "resultLink": {"ok": False},
+                "resultNumber": {"ok": False},
+                "batchCheckbox": {"ok": False},
+                "batchSort": {"ok": False},
+                "resultCount": {"ok": False},
+            },
+            "message": "结果列表尚未渲染",
+        }
+        ready = {
+            "profileId": "pkulaw-v6",
+            "version": "v1",
+            "detected": True,
+            "ready": True,
+            "pageKind": "results",
+            "pageReady": True,
+            "missingControls": [],
+            "controls": {
+                "resultsRoot": {"ok": True},
+                "resultLink": {"ok": True},
+                "resultNumber": {"ok": True},
+                "batchCheckbox": {"ok": True},
+                "batchSort": {"ok": True},
+                "resultCount": {"ok": True},
+            },
+            "message": "选择器诊断通过",
+        }
+        with patch.object(
+            self.adapter,
+            "diagnose_current_page",
+            side_effect=[missing, missing, ready, ready],
+        ):
+            result = self.adapter.diagnose_current_page_stable(
+                timeout_seconds=1.0
+            )
+        self.assertTrue(result["ready"])
+        self.assertTrue(result["operationReady"])
+        self.assertGreaterEqual(result["stabilitySamples"], 2)
+
     def test_audit_results_and_detail_branches(self) -> None:
         diagnosis = {
             "profileId": "pkulaw-v6",

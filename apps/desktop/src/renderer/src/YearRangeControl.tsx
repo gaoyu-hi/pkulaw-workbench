@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { YearSelection } from "../../shared/protocol";
 
 interface YearRangeControlProps {
@@ -5,7 +6,7 @@ interface YearRangeControlProps {
   onChange: (value: YearSelection) => void;
 }
 
-const MIN_YEAR = 2000;
+const MIN_YEAR = 1949;
 
 export function yearSelectionPayload(
   value: YearSelection
@@ -29,10 +30,6 @@ export default function YearRangeControl({
   onChange
 }: YearRangeControlProps): React.JSX.Element {
   const currentYear = new Date().getFullYear();
-  const years = Array.from(
-    { length: currentYear - MIN_YEAR + 1 },
-    (_, index) => currentYear - index
-  );
 
   function selectMode(mode: YearSelection["mode"]): void {
     if (mode === "all") {
@@ -72,56 +69,42 @@ export default function YearRangeControl({
           </select>
         </label>
         {value.mode === "single" && (
-          <label>
-            指定年份
-            <select
-              value={value.year}
-              onChange={(event) =>
-                onChange({ mode: "single", year: Number(event.target.value) })
-              }
-            >
-              {years.map((year) => (
-                <option key={year} value={year}>{year}</option>
-              ))}
-            </select>
-          </label>
+          <YearInput
+            label="指定年份"
+            value={value.year}
+            min={MIN_YEAR}
+            max={currentYear}
+            onChange={(year) => onChange({ mode: "single", year })}
+          />
         )}
         {value.mode === "range" && (
           <>
-            <label>
-              起始年份
-              <select
-                value={rangeStart}
-                onChange={(event) =>
-                  onChange({
-                    mode: "range",
-                    startYear: Number(event.target.value),
-                    endYear: rangeEnd
-                  })
-                }
-              >
-                {years.map((year) => (
-                  <option key={year} value={year}>{year}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              结束年份
-              <select
-                value={rangeEnd}
-                onChange={(event) =>
-                  onChange({
-                    mode: "range",
-                    startYear: rangeStart,
-                    endYear: Number(event.target.value)
-                  })
-                }
-              >
-                {years.map((year) => (
-                  <option key={year} value={year}>{year}</option>
-                ))}
-              </select>
-            </label>
+            <YearInput
+              label="起始年份"
+              value={rangeStart}
+              min={MIN_YEAR}
+              max={currentYear}
+              onChange={(year) =>
+                onChange({
+                  mode: "range",
+                  startYear: year,
+                  endYear: rangeEnd
+                })
+              }
+            />
+            <YearInput
+              label="结束年份"
+              value={rangeEnd}
+              min={MIN_YEAR}
+              max={currentYear}
+              onChange={(year) =>
+                onChange({
+                  mode: "range",
+                  startYear: rangeStart,
+                  endYear: year
+                })
+              }
+            />
           </>
         )}
       </div>
@@ -132,9 +115,76 @@ export default function YearRangeControl({
         {value.mode === "all"
           ? "不分年份，一次检索全部年份"
           : value.mode === "single"
-            ? `检索 ${value.year} 年`
-            : `${rangeStart} 至 ${rangeEnd}，按升序逐年份执行`}
+            ? `检索 ${value.year} 年；可手动输入 ${MIN_YEAR}–${currentYear} 的四位年份`
+            : `${rangeStart} 至 ${rangeEnd}，按升序逐年份执行；年份可手动输入`}
       </small>
     </div>
+  );
+}
+
+function YearInput({
+  label,
+  value,
+  min,
+  max,
+  onChange
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+}): React.JSX.Element {
+  const [text, setText] = useState(String(value));
+
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
+
+  function isValidYear(candidate: string): boolean {
+    if (!/^\d{4}$/.test(candidate)) return false;
+    const parsed = Number(candidate);
+    return parsed >= min && parsed <= max;
+  }
+
+  function commit(candidate = text): void {
+    if (!isValidYear(candidate)) {
+      setText(String(value));
+      return;
+    }
+    const parsed = Number(candidate);
+    if (parsed !== value) onChange(parsed);
+  }
+
+  const invalid =
+    text.length === 4 && /^\d{4}$/.test(text) && !isValidYear(text);
+  return (
+    <label>
+      {label}
+      <input
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]{4}"
+        maxLength={4}
+        autoComplete="off"
+        spellCheck={false}
+        title={`请输入 ${min}–${max} 的四位年份`}
+        aria-invalid={invalid}
+        value={text}
+        onFocus={(event) => event.currentTarget.select()}
+        onChange={(event) => {
+          const candidate = event.target.value.replace(/\D/g, "").slice(0, 4);
+          setText(candidate);
+          if (isValidYear(candidate)) onChange(Number(candidate));
+        }}
+        onBlur={() => commit()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            commit();
+            event.currentTarget.blur();
+          }
+        }}
+      />
+    </label>
   );
 }

@@ -38,8 +38,12 @@ class YearSelectionTests(unittest.TestCase):
     def test_year_boundaries_and_invalid_ranges(self) -> None:
         current = date.today().year
         self.assertEqual(
-            YearSelection(mode="single", year=2000).years,
-            ("2000",),
+            YearSelection(mode="single", year=1949).years,
+            ("1949",),
+        )
+        self.assertEqual(
+            YearSelection(mode="single", year=1999).years,
+            ("1999",),
         )
         self.assertEqual(
             YearSelection(mode="single", year=current).years,
@@ -49,7 +53,7 @@ class YearSelectionTests(unittest.TestCase):
             YearSelection(mode="range", start_year=2021, end_year=2018)
         self.assertEqual(reversed_context.exception.code, "INVALID_YEAR_RANGE")
         with self.assertRaises(ValidationError) as old_context:
-            YearSelection(mode="single", year=1999)
+            YearSelection(mode="single", year=1948)
         self.assertEqual(old_context.exception.code, "YEAR_OUT_OF_RANGE")
         with self.assertRaises(ValidationError) as format_context:
             parse_year_selection({"year": "20x4"})

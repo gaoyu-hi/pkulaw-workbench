@@ -358,7 +358,13 @@ class EngineApplication:
 
         if method == "browser.selector-diagnostics":
             adapter = PkulawAdapter(self.browser_bridge, self.logger)
-            return response_message(request_id, adapter.diagnose_current_page()), []
+            return (
+                response_message(
+                    request_id,
+                    adapter.diagnose_current_page_stable(),
+                ),
+                [],
+            )
 
         if method == "browser.page-audit":
             adapter = PkulawAdapter(self.browser_bridge, self.logger)
