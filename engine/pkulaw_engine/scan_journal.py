@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -110,16 +111,87 @@ class ScanJournal:
         library: str,
         year: str,
         page: int,
+        partition_key: str = "",
     ) -> dict[str, Any] | None:
         for record in self.read():
             if (
                 record["query"] == query
                 and record["library"] == library
                 and record["effectiveYear"] == year
+                and str(record.get("partitionKey") or "") == partition_key
                 and int(record["page"]) == int(page)
             ):
                 return record
         return None
+
+    def quarantine(self, reason: str) -> Path:
+        """Move a stale partial journal aside without discarding evidence."""
+
+        records = self.read()
+        if not self.path.is_file():
+            raise ScanJournalError(
+                "SCAN_JOURNAL_NOT_FOUND",
+                "扫描日志不存在，无法隔离旧结果集",
+            )
+        archive_root = self.path.parent / "archive"
+        archive_root.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        destination = (
+            archive_root
+            / f"{self.path.stem}-{stamp}{self.path.suffix}"
+        )
+        metadata_path = destination.with_suffix(
+            destination.suffix + ".meta.json"
+        )
+        metadata = {
+            "schemaVersion": SCAN_JOURNAL_SCHEMA_VERSION,
+            "taskId": self.task_id,
+            "configFingerprint": self.config_fingerprint,
+            "reason": str(reason),
+            "quarantinedAt": datetime.now(timezone.utc).isoformat(),
+            "records": len(records),
+            "pages": [
+                int(record["page"])
+                for record in records
+            ],
+            "lastStableSession": (
+                {
+                    "query": records[-1]["query"],
+                    "library": records[-1]["library"],
+                    "year": records[-1]["effectiveYear"],
+                    "partitionKey": str(
+                        records[-1].get("partitionKey") or ""
+                    ),
+                    "page": records[-1]["page"],
+                    "searchId": records[-1]["searchId"],
+                    "resultSignature": records[-1]["resultSignature"],
+                    "observedAt": records[-1]["observedAt"],
+                }
+                if records
+                else None
+            ),
+        }
+        os.replace(self.path, destination)
+        if self.marker_path.is_file():
+            archived_marker = destination.with_suffix(
+                destination.suffix + ".sealed"
+            )
+            os.replace(self.marker_path, archived_marker)
+        temporary = metadata_path.with_suffix(
+            metadata_path.suffix + ".tmp"
+        )
+        with temporary.open("w", encoding="utf-8") as stream:
+            json.dump(
+                metadata,
+                stream,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, metadata_path)
+        self._summary_cache = None
+        return destination
 
     def checkpoint_summary(self) -> dict[str, Any]:
         if self._summary_cache is not None:
@@ -142,6 +214,7 @@ class ScanJournal:
                     str(record["query"]),
                     str(record["library"]),
                     str(record["effectiveYear"]),
+                    str(record.get("partitionKey") or ""),
                 )
             )
             combination = combinations.setdefault(
@@ -150,6 +223,9 @@ class ScanJournal:
                     "query": record["query"],
                     "library": record["library"],
                     "year": record["effectiveYear"],
+                    "partitionKey": str(
+                        record.get("partitionKey") or ""
+                    ),
                     "pages": [],
                     "lastPage": 0,
                     "totalPages": 0,
@@ -181,6 +257,7 @@ class ScanJournal:
                     "query": last["query"],
                     "library": last["library"],
                     "year": last["effectiveYear"],
+                    "partitionKey": str(last.get("partitionKey") or ""),
                     "page": last["page"],
                     "searchId": last["searchId"],
                     "resultSignature": last["resultSignature"],
@@ -197,8 +274,9 @@ class ScanJournal:
         query = str(record["query"])
         library = str(record["library"])
         year = str(record["effectiveYear"])
+        partition_key = str(record.get("partitionKey") or "")
         page = int(record["page"])
-        key = "|".join((query, library, year))
+        key = "|".join((query, library, year, partition_key))
         combinations = list(self._summary_cache.get("combinations") or [])
         combination = next(
             (
@@ -208,6 +286,8 @@ class ScanJournal:
                     item.get("query") == query
                     and item.get("library") == library
                     and item.get("year") == year
+                    and str(item.get("partitionKey") or "")
+                    == partition_key
                 )
             ),
             None,
@@ -217,6 +297,7 @@ class ScanJournal:
                 "query": query,
                 "library": library,
                 "year": year,
+                "partitionKey": partition_key,
                 "pages": [],
                 "lastPage": 0,
                 "totalPages": 0,
@@ -258,6 +339,7 @@ class ScanJournal:
                     "query": query,
                     "library": library,
                     "year": year,
+                    "partitionKey": partition_key,
                     "page": page,
                     "searchId": record["searchId"],
                     "resultSignature": record["resultSignature"],
@@ -389,14 +471,18 @@ class ScanJournal:
 
     @staticmethod
     def _validate_sequence(records: list[dict[str, Any]]) -> None:
-        search_ids: dict[tuple[str, str, str], str] = {}
-        seen_pages: set[tuple[str, str, str, int]] = set()
-        page_records: dict[tuple[str, str, str, int], dict[str, Any]] = {}
+        search_ids: dict[tuple[str, str, str, str], str] = {}
+        seen_pages: set[tuple[str, str, str, str, int]] = set()
+        page_records: dict[
+            tuple[str, str, str, str, int],
+            dict[str, Any],
+        ] = {}
         for record in records:
             key = (
                 str(record["query"]),
                 str(record["library"]),
                 str(record["effectiveYear"]),
+                str(record.get("partitionKey") or ""),
             )
             current_search_id = str(record["searchId"])
             expected = search_ids.setdefault(key, current_search_id)
@@ -417,9 +503,13 @@ class ScanJournal:
                 if not (
                     resumed_from == expected
                     and previous_record is not None
-                    and str(previous_record["searchId"]) == resumed_from
                     and str(previous_record["resultSignature"])
                     == str(previous_page.get("resultSignature") or "")
+                    and str(
+                        previous_page.get("searchId")
+                        or previous_record["searchId"]
+                    )
+                    == str(previous_record["searchId"])
                 ):
                     raise ScanJournalError(
                         "SCAN_JOURNAL_IDENTITY_MISMATCH",

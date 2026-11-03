@@ -14,7 +14,7 @@ from .protocol import utc_now
 from .sources.access_state import (
     DEFAULT_ACCESS_SELECTORS,
     AccessState,
-    read_access_state,
+    read_stable_access_state,
 )
 from .storage import ValidationError
 
@@ -198,7 +198,7 @@ class BrowserBridge:
         }
 
     def _read_access_state(self) -> AccessState:
-        return read_access_state(
+        return read_stable_access_state(
             _BoundJsRunner(self._run_bound_js),
             DEFAULT_ACCESS_SELECTORS,
         )

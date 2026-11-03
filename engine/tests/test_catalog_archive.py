@@ -184,6 +184,59 @@ class CatalogAndArchiveTests(unittest.TestCase):
         self.assertTrue(result["identityMappingOk"])
         self.assertEqual(len(result["mapping"]), 2)
 
+    def test_real_truncated_long_title_maps_without_hyphen(
+        self,
+    ) -> None:
+        long_title = (
+            "陕西省科学技术协会、中共陕西省委宣传部、中共陕西省委网信办、"
+            "陕西省教育厅、陕西省科学技术厅、陕西省自然资源厅、"
+            "陕西省生态环境厅、陕西省水利厅、陕西省农业农村厅、"
+            "陕西省卫生健康委员会、陕西省应急管理厅、陕西省国资委、"
+            "陕西省科学院、陕西省林业局、陕西省总工会、共青团陕西省委、"
+            "陕西省妇女联合会、陕西省作家协会、陕西省工商业联合会"
+            "关于举办2023年陕西省全国科普日活动的通知"
+        )
+        selected = [
+            {
+                "number": 1,
+                "policyId": "policy-short",
+                "title": "批量政策一",
+            },
+            {
+                "number": 2,
+                "policyId": "policy-long",
+                "title": long_title,
+            },
+        ]
+        truncated = (
+            "陕西省科学技术协会、中共陕西省委宣传部、中共陕西省委网信办、"
+            "陕西省教育厅、陕西省科学技术厅、陕西省自然资源厅、陕西省"
+            "..."
+        )
+        path = self._zip_with_files(
+            "truncated.docx.zip",
+            [
+                ("批量政策一.docx", b"doc-one"),
+                (
+                    f"{truncated}(FBMCLI.14.7131719).docx",
+                    b"doc-two",
+                ),
+            ],
+        )
+
+        result = validate_zip(
+            path,
+            selected=selected,
+            full_format="docx",
+        )
+
+        mapped = {
+            row["policyId"]: row["archiveMember"]
+            for row in result["mapping"]
+        }
+        self.assertIn("policy-long", mapped)
+        self.assertIn("FBMCLI.14.7131719", mapped["policy-long"])
+
     def test_zip_path_traversal_is_rejected(self) -> None:
         path = self.root / "unsafe.zip"
         with zipfile.ZipFile(path, "w") as archive:

@@ -17,6 +17,7 @@ class RetrievalContext:
     query: str
     library: str
     year: str
+    scope_key: str
     search_id: str
     pages: dict[int, dict[str, Any]]
     batch_keys: tuple[str, ...]
@@ -28,6 +29,11 @@ class RetrievalContext:
             query=str(payload.get("query") or ""),
             library=str(payload.get("library") or ""),
             year=str(payload.get("year") or ""),
+            scope_key=str(
+                payload.get("scopeKey")
+                or payload.get("year")
+                or ""
+            ),
             search_id=str(payload.get("searchId") or ""),
             pages={
                 int(page["page"]): dict(page)
@@ -47,6 +53,7 @@ class RetrievalContext:
             "query": self.query,
             "library": self.library,
             "year": self.year,
+            "scopeKey": self.scope_key,
             "searchId": self.search_id,
             "pages": [
                 self.pages[page]
@@ -67,14 +74,12 @@ class NavigationDecision:
 
 class BatchExecutionContext:
     def __init__(self, contexts: list[dict[str, Any]]) -> None:
-        self.contexts = {
-            (
-                str(item.get("query") or ""),
-                str(item.get("library") or ""),
-                str(item.get("year") or ""),
-            ): RetrievalContext.from_dict(item)
-            for item in contexts
-        }
+        self.contexts = {}
+        for item in contexts:
+            context = RetrievalContext.from_dict(item)
+            self.contexts[
+                (context.query, context.library, context.scope_key)
+            ] = context
         self.active_key: tuple[str, str, str] | None = None
         self.active_search_id = ""
         self.current_session: SearchSession | None = None

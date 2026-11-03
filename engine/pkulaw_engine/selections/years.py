@@ -137,6 +137,9 @@ class SearchCombination:
     library_index: int
     year_index: int
     combination_index: int
+    province: str = ""
+    timeliness: str = ""
+    partition_key: str = ""
 
     def checkpoint(self) -> dict[str, Any]:
         return {
@@ -148,6 +151,9 @@ class SearchCombination:
             "library": self.library,
             "year": self.year,
             "currentYear": self.year,
+            "province": self.province,
+            "timeliness": self.timeliness,
+            "partitionKey": self.partition_key,
             "page": 1,
             "currentAction": "search",
         }
@@ -196,6 +202,9 @@ def mark_current_year_status(
         or checkpoint.get("library")
         or ""
     )
+    current_partition_key = str(
+        checkpoint.get("partitionKey") or ""
+    )
     updated: list[dict[str, Any]] = []
     for raw in checkpoint.get("yearStats") or []:
         item = dict(raw)
@@ -203,6 +212,11 @@ def mark_current_year_status(
             str(item.get("year") or "") == current_year
             and str(item.get("query") or "") == current_query
             and str(item.get("library") or "") == current_library
+            and (
+                not current_partition_key
+                or str(item.get("partitionKey") or "")
+                == current_partition_key
+            )
         ):
             item["status"] = status
         updated.append(item)

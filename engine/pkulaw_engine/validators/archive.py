@@ -147,18 +147,33 @@ def validate_zip(
             for info in documents:
                 member_name = info.filename.replace("\\", "/")
                 stem = PurePosixPath(member_name).stem
-                stem_normalized = normalize_title(stem)
+                title_stem = re.sub(
+                    r"\((?:FBM[-\s]?CLI)(?:\.[0-9]+){1,4}\)\s*$",
+                    "",
+                    stem,
+                    flags=re.IGNORECASE,
+                )
+                stem_normalized = normalize_title(title_stem)
+                truncated_title = bool(
+                    re.search(r"(?:\.{3,}|…+)\s*$", title_stem)
+                )
                 stem_lower = stem.lower()
                 matches = []
                 for index in remaining:
                     policy = selected[index]
                     title_normalized = normalize_title(str(policy.get("title") or ""))
                     policy_id = str(policy.get("policyId") or "").lower()
+                    truncated_prefix_match = (
+                        truncated_title
+                        and len(stem_normalized) >= 24
+                        and title_normalized.startswith(stem_normalized)
+                    )
                     if (
                         title_normalized
                         and (
                             title_normalized in stem_normalized
                             or stem_normalized in title_normalized
+                            or truncated_prefix_match
                         )
                     ) or (policy_id and policy_id in stem_lower):
                         matches.append(index)

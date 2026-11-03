@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -15,6 +18,7 @@ from pkulaw_engine.logging_utils import JsonLineLogger
 from pkulaw_engine.processing_task import DataProcessingManager
 from pkulaw_engine.sources.page_navigation import (
     PageNavigationError,
+    submit_page_form,
     transition_next_page,
 )
 from pkulaw_engine.sources.pkulaw import PkulawAdapter
@@ -163,6 +167,115 @@ class FullScopeFixtureTests(unittest.TestCase):
 
 
 class AccessStateContractTests(unittest.TestCase):
+    def test_transient_captcha_is_not_reported_after_false_resample(self) -> None:
+        read_stable_access_state = _require(
+            _optional_export(
+                "pkulaw_engine.sources.access_state",
+                "read_stable_access_state",
+            ),
+            "AccessState 必须对瞬时验证码元素进行二次确认",
+        )
+        observations = [
+            {
+                "url": "https://www.pkulaw.com/law/chl",
+                "captchaVisible": True,
+                "captchaSelector": ".drag_text",
+                "captchaBox": {
+                    "width": 300,
+                    "height": 34,
+                    "inViewport": True,
+                    "display": "block",
+                    "visibility": "visible",
+                    "opacity": "1",
+                },
+                "loginVisible": False,
+                "authenticated": True,
+                "quotaVisible": False,
+                "pageError": False,
+            },
+            {
+                "url": "https://www.pkulaw.com/law/chl",
+                "captchaVisible": False,
+                "captchaSelector": "",
+                "loginVisible": False,
+                "authenticated": True,
+                "quotaVisible": False,
+                "pageError": False,
+            },
+        ]
+
+        class SequenceTab:
+            calls = 0
+
+            def run_js(self, _script: str) -> dict[str, Any]:
+                current = observations[min(self.calls, 1)]
+                self.calls += 1
+                return dict(current)
+
+        tab = SequenceTab()
+        state = read_stable_access_state(
+            tab,
+            {"captcha": ".drag_text"},
+            sleep=lambda _seconds: None,
+        )
+
+        self.assertFalse(state.captcha_visible)
+        self.assertEqual(state.captcha_selector, "")
+        self.assertEqual(tab.calls, 2)
+
+    def test_short_lived_captcha_flash_requires_sustained_confirmation(
+        self,
+    ) -> None:
+        read_stable_access_state = _require(
+            _optional_export(
+                "pkulaw_engine.sources.access_state",
+                "read_stable_access_state",
+            ),
+            "AccessState 必须区分短暂闪烁和持续验证码",
+        )
+        visible = {
+            "url": "https://www.pkulaw.com/law/chl",
+            "captchaVisible": True,
+            "captchaSelector": ".drag_text",
+            "captchaBox": {
+                "width": 300,
+                "height": 34,
+                "inViewport": True,
+                "display": "block",
+                "visibility": "visible",
+                "opacity": "1",
+            },
+            "loginVisible": False,
+            "authenticated": True,
+            "quotaVisible": False,
+            "pageError": False,
+        }
+        absent = {
+            **visible,
+            "captchaVisible": False,
+            "captchaSelector": "",
+            "captchaBox": {},
+        }
+        observations = [visible, visible, absent]
+
+        class SequenceTab:
+            calls = 0
+
+            def run_js(self, _script: str) -> dict[str, Any]:
+                current = observations[min(self.calls, 2)]
+                self.calls += 1
+                return dict(current)
+
+        tab = SequenceTab()
+        state = read_stable_access_state(
+            tab,
+            {"captcha": ".drag_text"},
+            sleep=lambda _seconds: None,
+        )
+
+        self.assertFalse(state.captcha_visible)
+        self.assertEqual(tab.calls, 3)
+
     def test_dragtext_captcha_is_visible(self) -> None:
         read_access_state = _require(
             _optional_export(
@@ -187,6 +300,40 @@ class AccessStateContractTests(unittest.TestCase):
 
         self.assertTrue(state.captcha_visible)
         self.assertEqual(state.captcha_selector, ".drag_text")
+
+    def test_partially_clipped_dragtext_is_not_captcha(self) -> None:
+        read_access_state = _require(
+            _optional_export(
+                "pkulaw_engine.sources.access_state",
+                "read_access_state",
+            ),
+            "AccessState 不可把视口外半截占位滑块当验证码",
+        )
+        tab = _FakeTab(
+            {
+                "url": "https://www.pkulaw.com/law/chl",
+                "captchaVisible": True,
+                "captchaSelector": ".drag_text",
+                "captchaBox": {
+                    "x": -150,
+                    "width": 300,
+                    "height": 34,
+                    "inViewport": True,
+                    "substantiallyVisible": False,
+                    "hitTestVisible": False,
+                    "visibleAreaRatio": 0.5,
+                },
+                "loginVisible": False,
+                "authenticated": True,
+                "quotaVisible": False,
+                "pageError": False,
+            }
+        )
+
+        state = read_access_state(tab, {"captcha": ".drag_text"})
+
+        self.assertFalse(state.captcha_visible)
+        self.assertEqual(state.captcha_selector, "")
 
     def test_hidden_overlay_is_not_captcha(self) -> None:
         read_access_state = _require(
@@ -432,11 +579,24 @@ class PaginationContractTests(unittest.TestCase):
             adapter.selector_profile = self.profile
             adapter.selectors = dict(self.profile.selectors)
             states = [
-                {"page": 1, "totalPages": 3, "rows": [{"policyId": "p1"}]},
-                {"page": 1, "totalPages": 3, "rows": [{"policyId": "p1"}]},
-                {"page": 1, "totalPages": 3, "rows": [{"policyId": "p1"}]},
-                {"page": 2, "totalPages": 3, "rows": [{"policyId": "p2"}]},
-                {"page": 2, "totalPages": 3, "rows": [{"policyId": "p2"}]},
+                *[
+                    {
+                        "page": 1,
+                        "totalPages": 3,
+                        "rows": [{"policyId": "p1"}],
+                    }
+                    for _ in range(3)
+                ],
+                {
+                    "page": 2,
+                    "totalPages": 3,
+                    "rows": [{"policyId": "p2"}],
+                },
+                {
+                    "page": 2,
+                    "totalPages": 3,
+                    "rows": [{"policyId": "p2"}],
+                },
             ]
             clock = [0.0]
 
@@ -462,7 +622,10 @@ class PaginationContractTests(unittest.TestCase):
         scripts = [str(call.args[0]) for call in tab.run_js.call_args_list]
         self.assertGreaterEqual(len(scripts), 2)
         self.assertEqual(
-            sum("right_form.submit()" in script for script in scripts),
+            sum(
+                "right_form.requestSubmit()" in script
+                for script in scripts
+            ),
             1,
         )
 
@@ -502,6 +665,66 @@ class PaginationContractTests(unittest.TestCase):
 
         self.assertFalse(result.used_form_fallback)
         self.assertEqual(tab.run_js.call_count, 1)
+
+    def test_slow_click_transition_never_submits_duplicate_form(self) -> None:
+        tab = MagicMock()
+        tab.run_js.return_value = {"ok": True}
+        states = iter(
+            [
+                {
+                    "page": 1,
+                    "totalPages": 3,
+                    "rows": [{"policyId": "p1"}],
+                },
+                {
+                    "page": 1,
+                    "totalPages": 3,
+                    "rows": [{"policyId": "p1"}],
+                },
+                {
+                    "page": 2,
+                    "totalPages": 3,
+                    "rows": [{"policyId": "p2-a"}],
+                },
+                {
+                    "page": 2,
+                    "totalPages": 3,
+                    "rows": [{"policyId": "p2-b"}],
+                },
+                {
+                    "page": 2,
+                    "totalPages": 3,
+                    "rows": [{"policyId": "p2-b"}],
+                },
+            ]
+        )
+
+        result = transition_next_page(
+            tab,
+            expected_page=2,
+            selectors=self.profile.selectors,
+            before_state={
+                "page": 1,
+                "totalPages": 3,
+                "rows": [{"policyId": "p1"}],
+            },
+            read_state=lambda: next(states),
+            click_timeout_seconds=2.5,
+            settle_timeout_seconds=3,
+            interval_seconds=0.1,
+            clock=_IncrementingClock(step=0.4),
+            sleep=lambda _seconds: None,
+        )
+
+        self.assertEqual(result.state["page"], 2)
+        self.assertFalse(result.used_form_fallback)
+        self.assertEqual(
+            sum(
+                "right_form.submit()" in str(call.args[0])
+                for call in tab.run_js.call_args_list
+            ),
+            0,
+        )
 
     def test_unavailable_next_control_uses_direct_form_for_effective_page(self) -> None:
         tab = MagicMock()
@@ -552,10 +775,36 @@ class PaginationContractTests(unittest.TestCase):
         self.assertEqual(result.state["page"], 21)
         self.assertEqual(
             sum(
-                "right_form.submit()" in str(call.args[0])
+                "right_form.requestSubmit()" in str(call.args[0])
                 for call in tab.run_js.call_args_list
             ),
             1,
+        )
+        scripts = [str(call.args[0]) for call in tab.run_js.call_args_list]
+        self.assertEqual(
+            sum("right_form.submit()" in script for script in scripts),
+            0,
+        )
+
+    def test_form_fallback_keeps_live_old_page_index(self) -> None:
+        tab = MagicMock()
+        tab.run_js.return_value = {"ok": True}
+
+        submit_page_form(
+            tab,
+            expected_page=22,
+            selectors=self.profile.selectors,
+        )
+
+        script = str(tab.run_js.call_args.args[0])
+        self.assertIn("previousPageIndex", script)
+        self.assertIn(
+            'setValue(\'input[name="OldPageIndex"]\', previousPageIndex)',
+            script,
+        )
+        self.assertIn(
+            'setValue(\'input[name="Pager.PageIndex"]\', 21)',
+            script,
         )
 
     def test_direct_page_fallback_rejects_old_page_as_truncation(self) -> None:
@@ -619,10 +868,10 @@ class PaginationContractTests(unittest.TestCase):
             )
         self.assertEqual(
             sum(
-                "right_form.submit()" in str(call.args[0])
+                "right_form.requestSubmit()" in str(call.args[0])
                 for call in tab.run_js.call_args_list
             ),
-            1,
+            0,
         )
 
     def test_transition_rejects_cross_search_identity(self) -> None:
@@ -1000,6 +1249,38 @@ class BodyCompletenessContractTests(unittest.TestCase):
         self.assertIn(18, result.missing_clause_numbers)
         self.assertIn("MISSING_CLAUSE_NUMBERS", result.issues)
 
+    def test_case_compilation_reference_articles_allow_sparse_numbers(
+        self,
+    ) -> None:
+        assess = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "assess_body_completeness",
+            ),
+            "案例汇编中的民法典条文指引是节选引用，不得按整部法典连续编号判定缺条",
+        )
+        body = "\n".join(
+            [
+                "民法典颁布五周年典型案例",
+                "（一）基本案情",
+                "人民法院依法审理并作出裁判。",
+                "（二）裁判结果",
+                "生效裁判明确了相关民事责任。",
+                "（三）典型意义",
+                "本案具有示范意义。",
+                "（四）民法典条文指引",
+                "第一千二百二十九条 因污染环境、破坏生态造成他人损害的，侵权人应当承担侵权责任。",
+                "第一千二百三十四条 违反国家规定造成生态环境损害的，依法承担修复责任。",
+            ]
+        )
+
+        result = assess(body)
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.clause_count, 2)
+        self.assertEqual(result.clause_numbers, [1229, 1234])
+        self.assertNotIn("MISSING_CLAUSE_NUMBERS", result.issues)
+
     def test_empty_section_is_suspicious(self) -> None:
         assess = _require(
             _optional_export(
@@ -1048,6 +1329,358 @@ class BodyCompletenessContractTests(unittest.TestCase):
         self.assertEqual(result.clause_count, 4)
         self.assertNotIn("EMPTY_SECTION", result.issues)
 
+    def test_toc_outline_without_clauses_is_not_empty_sections(self) -> None:
+        assess = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "assess_body_completeness",
+            ),
+            "无条文编号的规划正文也必须去除目录章节",
+        )
+        body = "\n".join(
+            [
+                "目录",
+                "第一章 发展环境",
+                "第二章 指导思想",
+                "第三章 主要目标",
+                "第一章 发展环境",
+                "当前发展环境面临新的机遇和挑战。",
+                "第二章 指导思想",
+                "坚持高质量发展和统筹协调。",
+                "第三章 主要目标",
+                "到规划期末形成完整的发展体系。",
+            ]
+        )
+
+        result = assess(body)
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.section_count, 3)
+        self.assertNotIn("EMPTY_SECTION", result.issues)
+
+    def test_toc_with_compact_first_heading_is_removed(self) -> None:
+        assess = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "assess_body_completeness",
+            ),
+            "目录第一章节号后没有空格时仍须识别并移除整个目录",
+        )
+        body = "\n".join(
+            [
+                "目 录",
+                "第一章“十四五”时期发展成效",
+                "第二章 发展环境",
+                "第三章 总体要求",
+                "第一章 “十四五”时期发展成效",
+                "全县经济社会发展取得显著成效。",
+                "第二章 发展环境",
+                "当前发展环境面临新的机遇和挑战。",
+                "第三章 总体要求",
+                "坚持高质量发展和统筹协调。",
+            ]
+        )
+
+        result = assess(body)
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.section_count, 3)
+        self.assertNotIn("EMPTY_SECTION", result.issues)
+
+    def test_toc_marker_embedded_in_heading_is_removed(self) -> None:
+        assess = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "assess_body_completeness",
+            ),
+            "目录标记与规划纲要标题位于同一行时仍须识别",
+        )
+        body = "\n".join(
+            [
+                "苍梧县国民经济和社会发展第十五个五年规划纲要目 录",
+                "第一篇 发展基础",
+                "第一章 发展成效",
+                "第二章 发展环境",
+                "第三章 总体要求",
+                "第一篇 发展基础",
+                "第一章 发展成效",
+                "全县综合实力持续提升。",
+                "第二章 发展环境",
+                "发展环境面临新的机遇。",
+                "第三章 总体要求",
+                "坚持高质量发展。",
+            ]
+        )
+
+        result = assess(body)
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.section_count, 3)
+        self.assertNotIn("EMPTY_SECTION", result.issues)
+
+    def test_embedded_toc_marker_split_across_lines_is_removed(self) -> None:
+        assess = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "assess_body_completeness",
+            ),
+            "目录标记嵌在标题末尾且被拆成两行时仍须识别",
+        )
+        body = "\n".join(
+            [
+                "苍梧县第十五个五年规划纲要目",
+                "录",
+                "第一章 发展成效",
+                "第二章 发展环境",
+                "第三章 总体要求",
+                "第一章 发展成效",
+                "全县综合实力持续提升。",
+                "第二章 发展环境",
+                "发展环境面临新的机遇。",
+                "第三章 总体要求",
+                "坚持高质量发展。",
+            ]
+        )
+
+        result = assess(body)
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.section_count, 3)
+        self.assertNotIn("EMPTY_SECTION", result.issues)
+
+    def test_toc_with_per_part_chapter_reset_uses_repeated_preface(self) -> None:
+        assess = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "assess_body_completeness",
+            ),
+            "多篇规划重复使用第一至三章时不得把第二篇目录误当成正文起点",
+        )
+        body = "\n".join(
+            [
+                "目 录",
+                "前 言",
+                "第一篇 发展基础",
+                "第一章 发展成效",
+                "第二章 发展环境",
+                "第三章 总体要求",
+                "第二篇 重点任务",
+                "第一章 产业升级",
+                "第二章 城乡融合",
+                "第三章 生态保护",
+                "前 言",
+                "规划实施进入新的阶段。",
+                "第一篇 发展基础",
+                "第一章 发展成效",
+                "全县综合实力持续提升。",
+                "第二章 发展环境",
+                "发展环境面临新的机遇。",
+                "第三章 总体要求",
+                "坚持高质量发展。",
+                "第二篇 重点任务",
+                "第一章 产业升级",
+                "加快产业转型升级。",
+                "第二章 城乡融合",
+                "推进城乡协调发展。",
+                "第三章 生态保护",
+                "加强生态环境保护。",
+            ]
+        )
+
+        result = assess(body)
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.section_count, 6)
+        self.assertNotIn("EMPTY_SECTION", result.issues)
+
+    def test_toc_with_per_part_reset_uses_longest_repeated_sequence(
+        self,
+    ) -> None:
+        assess = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "assess_body_completeness",
+            ),
+            "无重复前言的多篇规划必须选择最长目录重复序列作为正文起点",
+        )
+        body = "\n".join(
+            [
+                "目 录",
+                "第一篇 发展基础",
+                "第一章 发展成效",
+                "第二章 发展环境",
+                "第三章 总体要求",
+                "第二篇 重点任务",
+                "第一章 产业升级",
+                "第二章 城乡融合",
+                "第三章 生态保护",
+                "第一篇 发展基础",
+                "第一章 发展成效",
+                "全县综合实力持续提升。",
+                "第二章 发展环境",
+                "发展环境面临新的机遇。",
+                "第三章 总体要求",
+                "坚持高质量发展。",
+                "第二篇 重点任务",
+                "第一章 产业升级",
+                "加快产业转型升级。",
+                "第二章 城乡融合",
+                "推进城乡协调发展。",
+                "第三章 生态保护",
+                "加强生态环境保护。",
+            ]
+        )
+
+        result = assess(body)
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.section_count, 6)
+        self.assertNotIn("EMPTY_SECTION", result.issues)
+
+    def test_split_toc_text_nodes_do_not_become_empty_sections(self) -> None:
+        assess = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "assess_body_completeness",
+            ),
+            "真实页面拆分的“目录”文本节点不得破坏目录识别",
+        )
+        body = "\n".join(
+            [
+                "目",
+                "录",
+                "第一编 总则",
+                "第一章 目的",
+                "第二章 适用",
+                "第三章 结构",
+                "第二编 实施",
+                "第一章 执行",
+                "第二章 监督",
+                "第三章 保障",
+                "第一编 总则",
+                "第一章 目的",
+                "第一条",
+                "为了规范实施，制定本法。",
+                "第二章 适用",
+                "第二条",
+                "本法适用于实施活动。",
+                "第三章 结构",
+                "第三条",
+                "结构应当完整。",
+                "第二编 实施",
+                "第一章 执行",
+                "第四条",
+                "主管部门负责执行。",
+                "第二章 监督",
+                "第五条",
+                "有关方面依法开展监督。",
+                "第三章 保障",
+                "第六条",
+                "提供必要保障。",
+            ]
+        )
+
+        result = assess(body)
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.section_count, 6)
+        self.assertEqual(result.clause_count, 6)
+        self.assertNotIn("EMPTY_SECTION", result.issues)
+
+    def test_multi_part_toc_outline_is_removed_before_clauses(self) -> None:
+        assess = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "assess_body_completeness",
+            ),
+            "多编多分编目录不得被当作空正文章节",
+        )
+        body = "\n".join(
+            [
+                "目录",
+                "第一编 总则",
+                "第一章 目的",
+                "第二章 适用",
+                "第二编 实施",
+                "第一章 执行",
+                "第二章 监督",
+                "第一编 总则",
+                "第一章 目的",
+                "第一条",
+                "为了规范实施，制定本法。",
+                "第二章 适用",
+                "第二条",
+                "本法适用于实施活动。",
+                "第二编 实施",
+                "第一章 执行",
+                "第三条",
+                "主管部门负责执行。",
+                "第二章 监督",
+                "第四条",
+                "有关方面依法开展监督。",
+            ]
+        )
+
+        result = assess(body)
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.section_count, 4)
+        self.assertEqual(result.clause_count, 4)
+        self.assertNotIn("EMPTY_SECTION", result.issues)
+
+    def test_clause_number_line_followed_by_body_is_not_empty(self) -> None:
+        assess = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "assess_body_completeness",
+            ),
+            "条文编号和正文分段时必须按下一行正文判断",
+        )
+        body = "\n".join(
+            [
+                "第一章 总则",
+                "第一条",
+                "为了规范测试工作，制定本规定。",
+                "第二条",
+                "本规定适用于正文完整性测试。",
+                "第二章 附则",
+                "第三条",
+                "本规定自发布之日起施行。",
+            ]
+        )
+
+        result = assess(body)
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.clause_count, 3)
+        self.assertNotIn("EMPTY_CLAUSE_BODY", result.issues)
+
+    def test_article_heading_without_space_is_still_a_clause(self) -> None:
+        assess = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "assess_body_completeness",
+            ),
+            "条文号与条文标题之间缺少空格时不得误报整条缺失",
+        )
+        body = "\n".join(
+            [
+                "第一章 燃气设施规划",
+                "第一条 调峰及应急储备设施规划",
+                "统筹落实季节调峰和日调峰责任。",
+                "第二条燃气系统配套设施规划",
+                "管道气经营企业应设置抢修维修站点。",
+                "第三条 燃气设施更新改造",
+                "对不满足安全要求的设施逐步实施更新改造。",
+            ]
+        )
+
+        result = assess(body)
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.clause_count, 3)
+        self.assertEqual(result.missing_clause_numbers, [])
+
     def test_non_clause_paragraph_counts_as_section_content(self) -> None:
         assess = _require(
             _optional_export(
@@ -1086,6 +1719,66 @@ class BodyCompletenessContractTests(unittest.TestCase):
         self.assertIn(".fbWindow-btn", script)
         self.assertIn("button", script)
 
+    def test_inline_search_highlight_does_not_split_heading(self) -> None:
+        build_script = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "detail_body_extraction_js",
+            ),
+            "正文提取必须保留内联命中高亮所在段落的连续文本",
+        )
+        node_executable = shutil.which("node")
+        self.assertIsNotNone(node_executable, "Node.js 用于运行真实正文提取脚本")
+        harness = """
+        const Node = { TEXT_NODE: 3, ELEMENT_NODE: 1 };
+        const text = value => ({ nodeType: 3, textContent: value });
+        const element = (children, matches = () => false) => {
+          const node = {
+            nodeType: 1,
+            childNodes: children,
+            matches,
+            querySelectorAll: () => []
+          };
+          Object.defineProperty(node, "textContent", {
+            get: () => children.map(child => child.textContent || "").join("")
+          });
+          return node;
+        };
+        const mockRoot = element([]);
+        const highlighted = element([text("碳中和")]);
+        const heading = element([
+          text("第二节 减缓气候变化与碳达峰"),
+          highlighted
+        ]);
+        mockRoot.childNodes = [heading];
+        const query = () => mockRoot;
+        const clean = value => (value || "").replace(/\\s+/g, " ").trim();
+        """
+        script = (
+            harness
+            + build_script("#divFullText")
+            + "\nconsole.log(JSON.stringify({ bodySegments, body }));\n"
+        )
+        completed = subprocess.run(
+            [str(node_executable), "-"],
+            input=script,
+            text=True,
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        extracted = json.loads(completed.stdout)
+        self.assertEqual(
+            extracted["bodySegments"],
+            ["第二节 减缓气候变化与碳达峰碳中和"],
+        )
+        self.assertEqual(
+            extracted["body"],
+            "第二节 减缓气候变化与碳达峰碳中和",
+        )
+
     def test_truncated_clause_is_suspicious(self) -> None:
         assess = _require(
             _optional_export(
@@ -1098,6 +1791,49 @@ class BodyCompletenessContractTests(unittest.TestCase):
         lines[-1] = "第三十八条"
 
         result = assess("\n".join(lines))
+
+        self.assertEqual(result.status, "suspicious")
+        self.assertIn("TRUNCATED_TAIL", result.issues)
+
+    def test_table_placeholder_ellipsis_is_not_truncated_tail(self) -> None:
+        assess = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "assess_body_completeness",
+            ),
+            "绩效目标表中用于填写的省略号不得被当成正文截断",
+        )
+        body = "\n".join(
+            [
+                "项目绩效目标申报表",
+                "绩效指标 | 一级指标 | 二级指标 | 三级指标 | 指标值",
+                "产出指标 | 数量指标 | 矿山生态修复面积（公顷） | XX",
+                "修复废弃矿山（矿点）数量（个） | XX",
+                "…",
+                "质量指标 | 工程质量合格率（%） | ≥XX",
+                "…",
+                "满意度 | 服务对象满意度指标 | …",
+                "…",
+            ]
+        )
+
+        result = assess(body)
+
+        self.assertEqual(result.status, "complete")
+        self.assertNotIn("TRUNCATED_TAIL", result.issues)
+
+    def test_prose_ellipsis_still_marks_truncated_tail(self) -> None:
+        assess = _require(
+            _optional_export(
+                "pkulaw_engine.body_quality",
+                "assess_body_completeness",
+            ),
+            "正文句子以省略号结束时仍应失败关闭",
+        )
+
+        result = assess(
+            "现就有关事项通知如下。\n后续事项将在另行印发……"
+        )
 
         self.assertEqual(result.status, "suspicious")
         self.assertIn("TRUNCATED_TAIL", result.issues)

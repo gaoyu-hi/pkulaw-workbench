@@ -9,6 +9,7 @@ from pkulaw_engine.policy import (
     candidate_score,
     extract_policy_id,
     group_results,
+    normalize_detail_title,
     normalize_title,
     policy_identity,
     policy_filename,
@@ -26,6 +27,20 @@ class PolicyUtilityTests(unittest.TestCase):
         self.assertEqual(
             normalize_title("ＡＢＣ１２３"),
             normalize_title("abc123"),
+        )
+
+    def test_normalize_detail_title_ignores_site_status_suffix(self) -> None:
+        self.assertEqual(
+            normalize_detail_title("中华人民共和国测试法 已被修改"),
+            normalize_detail_title("中华人民共和国测试法"),
+        )
+        self.assertEqual(
+            normalize_detail_title("测试规划（现行有效）"),
+            normalize_detail_title("测试规划"),
+        )
+        self.assertEqual(
+            normalize_detail_title("测试通知 废止或失效"),
+            normalize_detail_title("测试通知"),
         )
 
     def test_legacy_doc_attachment_requires_ole_header(self) -> None:

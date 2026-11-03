@@ -68,9 +68,49 @@ def can_use_government_fallback(
     task_input = dict(task.get("input") or {})
     if task_input.get("matchMode") != "title":
         return False
+    if item.get("status") == "completed":
+        payload = dict(item.get("payload") or {})
+        source_host = (
+            urlparse(str(payload.get("sourceUrl") or "")).hostname or ""
+        ).lower()
+        return bool(
+            str(payload.get("governmentDocumentId") or "").strip()
+            and (
+                source_host == "gov.cn"
+                or source_host.endswith(".gov.cn")
+            )
+        )
     if item.get("status") not in {"failed", "pending"}:
         return False
     return (item.get("error") or {}).get("code") == "NO_EXACT_MATCH"
+
+
+def select_processable_items(
+    task: dict[str, Any],
+    items: list[dict[str, Any]],
+    options: dict[str, Any],
+) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    for item in items:
+        if can_use_government_fallback(task, item, options):
+            selected.append(item)
+            continue
+        if item.get("status") != "completed":
+            continue
+        payload = dict(item.get("payload") or {})
+        if task.get("mode") == "single":
+            source = Path(str(payload.get("downloadedFile") or ""))
+            if source.is_file() and source.suffix.lower() in {".doc", ".docx"}:
+                selected.append(item)
+            continue
+        archive = Path(str(payload.get("zipFile") or ""))
+        archive_metadata = dict(payload.get("archive") or {})
+        if (
+            archive.is_file()
+            and str(archive_metadata.get("archiveMember") or "").strip()
+        ):
+            selected.append(item)
+    return selected
 
 
 def materialize_zip_member(
@@ -553,8 +593,17 @@ class DataProcessingManager:
                 completed_documents=0,
             )
 
-            items = store.list_task_items(task_id)
-            total = max(1, len(items))
+            items = select_processable_items(
+                task,
+                store.list_task_items(task_id),
+                options,
+            )
+            if not items:
+                raise ValidationError(
+                    "NO_PROCESSABLE_DOCUMENTS",
+                    "没有具备真实 Word 或 ZIP 下载源的可处理项目",
+                )
+            total = len(items)
             for index, item in enumerate(items, start=1):
                 self._safe_boundary(
                     store,
@@ -1029,13 +1078,34 @@ class DataProcessingManager:
         body = ""
         extraction: DocumentExtractionResult | None = None
         extraction_error: DocumentExtractionError | None = None
+        word_body_quality: dict[str, Any] | None = None
         try:
             extraction = extract_document(destination)
             body = extraction.text
+            word_body_quality = assess_body_completeness(body).to_dict()
         except DocumentExtractionError as exc:
             extraction_error = exc
             page_body = normalize_text(str(detail.get("body") or ""))
             if len(page_body) >= 20:
+                body = page_body
+                extraction = DocumentExtractionResult(
+                    text=page_body,
+                    artifact_method="detail-page-fallback",
+                    text_source_type="detail-page-text",
+                    converter_name="pkulaw-detail-dom",
+                    converter_version="2026-11-02",
+                )
+        if (
+            extraction is not None
+            and extraction.artifact_method != "detail-page-fallback"
+            and word_body_quality is not None
+            and word_body_quality["status"] != "complete"
+        ):
+            page_body = normalize_text(str(detail.get("body") or ""))
+            if (
+                len(page_body) >= 20
+                and assess_body_completeness(page_body).status == "complete"
+            ):
                 body = page_body
                 extraction = DocumentExtractionResult(
                     text=page_body,
@@ -1096,6 +1166,7 @@ class DataProcessingManager:
                 "textMethod": extraction.artifact_method,
                 "extraction": extraction.to_dict(),
                 "bodyQuality": review_metadata["bodyQuality"],
+                "wordBodyQuality": word_body_quality or {},
                 "detail": detail,
             },
         )
@@ -1131,6 +1202,7 @@ class DataProcessingManager:
                 "txtSha256": txt_sha,
                 "extraction": extraction.to_dict(),
                 "bodyQuality": review_metadata["bodyQuality"],
+                "wordBodyQuality": word_body_quality or {},
             },
         )
 

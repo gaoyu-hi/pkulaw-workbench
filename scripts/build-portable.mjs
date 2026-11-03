@@ -10,6 +10,11 @@ const appRoot = path.join(root, "apps", "desktop");
 const releaseRoot = path.join(root, "release");
 const engineBuildRoot = path.join(releaseRoot, "engine");
 const stageRoot = path.join(releaseRoot, "PkulawWorkbench-portable");
+const portableDataPath = path.join(stageRoot, "数据");
+const portableDataBackup = path.join(
+  releaseRoot,
+  ".portable-data-preserve-current"
+);
 const outputRoot = path.resolve(root, "..", "..", "outputs");
 const packageInfo = JSON.parse(
   await fsp.readFile(path.join(appRoot, "package.json"), "utf8")
@@ -102,6 +107,20 @@ if (!process.argv.includes("--skip-build")) {
     path.join(root, "build", "pyinstaller"),
     path.join(root, "engine", "pkulaw-engine.spec")
   ]);
+}
+
+const preservePortableData = fs.existsSync(portableDataPath);
+if (preservePortableData) {
+  if (fs.existsSync(portableDataBackup)) {
+    throw new Error(
+      `Refusing to overwrite an existing portable data backup: ${portableDataBackup}`
+    );
+  }
+  await fsp.cp(portableDataPath, portableDataBackup, {
+    recursive: true,
+    force: false,
+    errorOnExist: true
+  });
 }
 
 await fsp.rm(assertInside(stageRoot, releaseRoot), {
@@ -246,6 +265,11 @@ const checksum = await fileSha256(zipPath);
 await fsp.writeFile(`${zipPath}.sha256`, `${checksum}  ${path.basename(zipPath)}\n`, "utf8");
 
 run(process.execPath, [path.join(root, "scripts", "package-source.mjs")]);
+
+if (preservePortableData) {
+  await fsp.rm(portableDataPath, { recursive: true, force: true });
+  await fsp.rename(portableDataBackup, portableDataPath);
+}
 
 console.log(
   JSON.stringify(

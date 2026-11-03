@@ -14,6 +14,21 @@ def normalize_title(value: str) -> str:
     return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", normalized)
 
 
+_DETAIL_TITLE_STATUS_RE = re.compile(
+    r"(?:\s*(?:已被修改|现行有效|已废止或失效|废止或失效|已废止|失效|"
+    r"尚未生效|部分废止或失效)\s*|"
+    r"\s*[\(（](?:已被修改|现行有效|已废止或失效|废止或失效|已废止|失效|"
+    r"尚未生效|部分废止或失效)[\)）]\s*)$"
+)
+
+
+def normalize_detail_title(value: str) -> str:
+    """Ignore status text appended by the result/detail page shell."""
+
+    clean = _DETAIL_TITLE_STATUS_RE.sub("", str(value or ""))
+    return normalize_title(clean)
+
+
 def safe_filename(value: str, limit: int | None = 180) -> str:
     result = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", str(value or ""))
     result = re.sub(r"\s+", " ", result).strip(" ._") or "未命名"

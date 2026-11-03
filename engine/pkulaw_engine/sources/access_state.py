@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 
 DEFAULT_ACCESS_SELECTORS: dict[str, str] = {
@@ -105,12 +106,69 @@ def read_access_state(
               rect.left < viewportWidth &&
               rect.top < viewportHeight
             );
+            const visibleWidth = Math.max(
+              0,
+              Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0)
+            );
+            const visibleHeight = Math.max(
+              0,
+              Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0)
+            );
+            const visibleAreaRatio = (
+              rect.width > 0 && rect.height > 0
+                ? (visibleWidth * visibleHeight) / (rect.width * rect.height)
+                : 0
+            );
+            const substantiallyVisible = (
+              !viewportMeasured ||
+              (visibleAreaRatio >= 0.75 &&
+                visibleWidth >= 24 &&
+                visibleHeight >= 12)
+            );
+            const startsInsideViewport = (
+              rect.left >= -1 &&
+              rect.top >= -1
+            );
+            let ancestorVisible = true;
+            let ancestor = element.parentElement;
+            while (ancestor) {{
+              const ancestorStyle = getComputedStyle(ancestor);
+              if (
+                ancestorStyle.display === "none" ||
+                ancestorStyle.visibility === "hidden" ||
+                Number(ancestorStyle.opacity || "1") <= 0.01 ||
+                ancestor.getAttribute("aria-hidden") === "true" ||
+                ancestor.inert === true
+              ) {{
+                ancestorVisible = false;
+                break;
+              }}
+              ancestor = ancestor.parentElement;
+            }}
+            const centerX = rect.left + Math.min(
+              Math.max(rect.width / 2, 1),
+              Math.max(rect.width - 1, 0)
+            );
+            const centerY = rect.top + Math.min(
+              Math.max(rect.height / 2, 1),
+              Math.max(rect.height - 1, 0)
+            );
+            const hit = viewportMeasured
+              ? document.elementFromPoint(centerX, centerY)
+              : null;
+            const hitTestVisible = (
+              !!hit &&
+              (hit === element || element.contains(hit))
+            );
             const visible = (
               element.getClientRects().length > 0 &&
               style.display !== "none" &&
               style.visibility !== "hidden" &&
               Number(style.opacity || "1") > 0 &&
-              (!viewportMeasured || intersectsViewport)
+              ancestorVisible &&
+              startsInsideViewport &&
+              (!viewportMeasured || intersectsViewport) &&
+              substantiallyVisible
             );
             return {{
               visible,
@@ -124,6 +182,11 @@ def read_access_state(
                 viewportWidth,
                 viewportHeight,
                 inViewport: viewportMeasured ? intersectsViewport : null,
+                substantiallyVisible,
+                hitTestVisible,
+                visibleAreaRatio,
+                visibleWidth,
+                visibleHeight,
                 display: style.display,
                 visibility: style.visibility,
                 opacity: style.opacity
@@ -188,7 +251,10 @@ def read_access_state(
     box = observation.get("captchaBox")
     captcha_visible = bool(observation.get("captchaVisible"))
     captcha_selector = str(observation.get("captchaSelector") or "")
-    if isinstance(box, dict) and box.get("inViewport") is False:
+    if isinstance(box, dict) and (
+        box.get("inViewport") is False
+        or box.get("substantiallyVisible") is False
+    ):
         captcha_visible = False
         captcha_selector = ""
         box = {}
@@ -206,3 +272,21 @@ def read_access_state(
         ready_state=str(observation.get("readyState") or ""),
         page_text=str(observation.get("pageText") or ""),
     )
+
+
+def read_stable_access_state(
+    tab: Any,
+    selectors: Mapping[str, Any] | None = None,
+    *,
+    interval_seconds: float = 1.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> AccessState:
+    first = read_access_state(tab, selectors)
+    if not first.captcha_visible:
+        return first
+    sleep(max(0.0, float(interval_seconds)))
+    second = read_access_state(tab, selectors)
+    if not second.captcha_visible:
+        return second
+    sleep(max(0.0, float(interval_seconds)))
+    return read_access_state(tab, selectors)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import threading
 import time
@@ -19,6 +20,7 @@ from .logging_utils import JsonLineLogger
 from .policy import (
     group_results,
     keyword_result_identity,
+    normalize_detail_title,
     normalize_title,
     policy_identity,
     policy_filename,
@@ -646,6 +648,12 @@ class SingleTaskManager:
                     controller,
                 )
             self._ensure_processing_selector_profile(adapter)
+            self._restore_adapter_search_context(
+                adapter,
+                store,
+                task_id,
+                config,
+            )
             groups = group_results(
                 all_rows,
                 identity_mode=config.match_mode,
@@ -907,10 +915,17 @@ class SingleTaskManager:
         adapter: PkulawAdapter,
         store: TaskStore,
         controller: TaskControl,
+        *,
+        _restart_after_universe_change: bool = True,
+        _source_drift_rescan: bool = False,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         libraries = ["central", "local"] if config.library == "both" else [config.library]
         combinations: list[SearchCombination]
         rows_by_identity: dict[str, dict[str, Any]] = {}
+        identities_by_scope: dict[
+            tuple[str, str],
+            set[str],
+        ] = {}
         scans: list[dict[str, Any]] = []
         scan_index = 0
         year_stats: dict[str, dict[str, Any]] = {}
@@ -922,6 +937,27 @@ class SingleTaskManager:
         year_partition = dict(
             initial_checkpoint.get("yearPartition") or {}
         )
+        year_partition = self._resolve_year_partition_plan(
+            adapter,
+            config,
+            year_partition,
+            initial_checkpoint,
+        )
+        if year_partition != dict(
+            initial_checkpoint.get("yearPartition") or {}
+        ):
+            self._update_task(
+                store,
+                task_id,
+                status="running",
+                current_stage="year-partition-scan",
+                clear_error=True,
+                checkpoint={
+                    **initial_checkpoint,
+                    "yearPartition": year_partition,
+                    "currentAction": "year-partition-scan",
+                },
+            )
         partition_years = [
             str(year)
             for year in year_partition.get("years") or []
@@ -941,6 +977,16 @@ class SingleTaskManager:
                 scope_library=str(
                     year_partition.get("library") or ""
                 ),
+                province_partitions={
+                    str(year): [
+                        str(value)
+                        for value in values or []
+                        if str(value).strip()
+                    ]
+                    for year, values in dict(
+                        year_partition.get("provincePartitions") or {}
+                    ).items()
+                },
             )
         else:
             combinations = expand_search_combinations(
@@ -952,7 +998,7 @@ class SingleTaskManager:
         journal = self._scan_journal(task_id, config)
         journal_records = journal.read()
         records_by_combination: dict[
-            tuple[str, str, str],
+            tuple[str, str, str, str],
             dict[int, dict[str, Any]],
         ] = {}
         for record in journal_records:
@@ -961,6 +1007,7 @@ class SingleTaskManager:
                     str(record["query"]),
                     str(record["library"]),
                     str(record["effectiveYear"]),
+                    str(record.get("partitionKey") or ""),
                 ),
                 {},
             )[int(record["page"])] = record
@@ -973,13 +1020,25 @@ class SingleTaskManager:
             query = combination.query
             library = combination.library
             year = combination.year
-            stats_key = f"{combination.query_index}:{library}:{year}"
+            stats_key = ":".join(
+                (
+                    str(combination.query_index),
+                    library,
+                    year,
+                    combination.partition_key,
+                )
+            )
             stats = year_stats.setdefault(
                 stats_key,
                 {
                     "query": query,
                     "library": library,
                     "year": year,
+                    "province": combination.province or config.province,
+                    "timeliness": (
+                        combination.timeliness or config.timeliness
+                    ),
+                    "partitionKey": combination.partition_key,
                     "status": "pending",
                     "resultCount": 0,
                     "rowsRead": 0,
@@ -987,7 +1046,12 @@ class SingleTaskManager:
                 },
             )
             existing_pages = records_by_combination.get(
-                (query, library, year),
+                (
+                    query,
+                    library,
+                    year,
+                    combination.partition_key,
+                ),
                 {},
             )
             existing_ordered = [
@@ -1021,6 +1085,10 @@ class SingleTaskManager:
                             if config.match_mode == "keyword"
                             else policy_identity(row)
                         )
+                        identities_by_scope.setdefault(
+                            (library, year),
+                            set(),
+                        ).add(identity)
                         rows_by_identity.setdefault(identity, row)
                     scan = self._scan_from_journal_record(record)
                     scans.append(scan)
@@ -1108,8 +1176,10 @@ class SingleTaskManager:
                         match_mode=config.match_mode,
                         library=library,
                         year=year,
-                        province=config.province,
-                        timeliness=config.timeliness,
+                        province=combination.province or config.province,
+                        timeliness=(
+                            combination.timeliness or config.timeliness
+                        ),
                         page_size=config.page_size,
                     ),
                     action_name="search",
@@ -1161,6 +1231,10 @@ class SingleTaskManager:
                 query=query,
                 library=library,
                 year=year,
+                province=combination.province or config.province,
+                timeliness=(
+                    combination.timeliness or config.timeliness
+                ),
                 expected_page=1,
             )
             result_window = assess_result_window(
@@ -1208,32 +1282,86 @@ class SingleTaskManager:
                 query=query,
                 library=library,
                 year=year,
+                province=combination.province or config.province,
+                timeliness=(
+                    combination.timeliness or config.timeliness
+                ),
                 expected_page=page,
             )
             resume_record: dict[str, Any] | None = None
             if existing_ordered:
                 first_record = existing_ordered[0]
-                if (
-                    int(first_record.get("page") or 0) != 1
-                    or search_session.result_signature
+                signature_changed = (
+                    search_session.result_signature
                     != str(first_record.get("resultSignature") or "")
-                ):
-                    raise ScanJournalError(
-                        "SCAN_JOURNAL_IDENTITY_MISMATCH",
-                        "重新检索后的第 1 页结果签名与扫描日志不一致",
-                    )
+                )
+                count_changed = (
+                    search_session.result_count
+                    != int(first_record.get("resultCount") or 0)
+                )
                 journal_total_pages = int(
                     existing_ordered[-1].get("totalPages") or 0
                 )
-                if (
+                pages_changed = bool(
                     journal_total_pages
                     and total_pages != journal_total_pages
+                )
+                if (
+                    int(first_record.get("page") or 0) != 1
+                    or signature_changed
+                    or count_changed
+                    or pages_changed
                 ):
+                    if _restart_after_universe_change:
+                        self._restart_scan_for_changed_universe(
+                            store=store,
+                            task_id=task_id,
+                            journal=journal,
+                            previous=first_record,
+                            current=search_session,
+                            reason=(
+                                "result-signature"
+                                if signature_changed
+                                else "result-count"
+                                if count_changed
+                                else "total-pages"
+                                if pages_changed
+                                else "page-sequence"
+                            ),
+                        )
+                        return self._collect(
+                            task_id,
+                            config,
+                            adapter,
+                            store,
+                            controller,
+                            _restart_after_universe_change=False,
+                        )
                     raise ScanJournalError(
                         "SCAN_JOURNAL_IDENTITY_MISMATCH",
-                        "重新检索后的有效总页数与扫描日志不一致",
+                        "重新检索后的结果集身份与扫描日志不一致，且不允许再次重启扫描",
                     )
                 resume_record = existing_ordered[-1]
+                last_completed_page = int(
+                    existing_ordered[-1].get("page") or 0
+                )
+                max_pages = config.page_selection.max_pages
+                if (
+                    page_mode == "limit"
+                    and max_pages is not None
+                    and last_completed_page >= max_pages
+                ):
+                    page_mode = self._wait_for_page_limit(
+                        store=store,
+                        controller=controller,
+                        task_id=task_id,
+                        query=query,
+                        library=library,
+                        year=year,
+                        page=last_completed_page,
+                        total_pages=total_pages,
+                        max_pages=max_pages,
+                    )
                 resume_page = int(
                     existing_ordered[-1].get("page") or 0
                 ) + 1
@@ -1248,12 +1376,23 @@ class SingleTaskManager:
                     query=query,
                     library=library,
                     year=year,
+                    province=combination.province or config.province,
+                    timeliness=(
+                        combination.timeliness or config.timeliness
+                    ),
                     expected_page=page,
                 )
             combination_total = {
                 "query": query,
                 "library": library,
                 "year": year,
+                "partitionKey": combination.partition_key,
+                "searchedProvince": (
+                    combination.province or config.province
+                ),
+                "searchedTimeliness": (
+                    combination.timeliness or config.timeliness
+                ),
                 "combinationIndex": combination.combination_index,
                 "page": page,
                 "totalPages": total_pages,
@@ -1299,6 +1438,10 @@ class SingleTaskManager:
                     query=query,
                     library=library,
                     year=year,
+                    province=combination.province or config.province,
+                    timeliness=(
+                        combination.timeliness or config.timeliness
+                    ),
                     expected_page=page,
                 )
                 if config.match_mode == "title":
@@ -1311,7 +1454,18 @@ class SingleTaskManager:
                     row["library"] = library
                     row["query"] = query
                     row["year"] = year
+                    row["partitionKey"] = combination.partition_key
+                    row["searchedProvince"] = (
+                        combination.province or config.province
+                    )
+                    row["searchedTimeliness"] = (
+                        combination.timeliness or config.timeliness
+                    )
                     identity = str(row.get("policyId") or row.get("url") or "")
+                    identities_by_scope.setdefault(
+                        (library, year),
+                        set(),
+                    ).add(identity)
                     rows_by_identity.setdefault(identity, row)
                 stats["resultCount"] = max(
                     int(stats.get("resultCount") or 0),
@@ -1325,6 +1479,13 @@ class SingleTaskManager:
                     "query": query,
                     "library": library,
                     "year": year,
+                    "partitionKey": combination.partition_key,
+                    "searchedProvince": (
+                        combination.province or config.province
+                    ),
+                    "searchedTimeliness": (
+                        combination.timeliness or config.timeliness
+                    ),
                     "yearIndex": combination.year_index,
                     "combinationIndex": combination.combination_index,
                     "page": page,
@@ -1347,6 +1508,13 @@ class SingleTaskManager:
                     "query": query,
                     "library": library,
                     "effectiveYear": year,
+                    "partitionKey": combination.partition_key,
+                    "selectedProvince": (
+                        combination.province or config.province
+                    ),
+                    "selectedTimeliness": (
+                        combination.timeliness or config.timeliness
+                    ),
                     "page": page,
                     "totalPages": total_pages,
                     "reportedTotalPages": (
@@ -1369,10 +1537,13 @@ class SingleTaskManager:
                             ),
                             "resumeEvidence": {
                                 "page": int(
-                                    existing_ordered[0].get("page") or 1
+                                    resume_record.get("page") or 0
+                                ),
+                                "searchId": str(
+                                    resume_record.get("searchId") or ""
                                 ),
                                 "resultSignature": str(
-                                    existing_ordered[0].get(
+                                    resume_record.get(
                                         "resultSignature"
                                     )
                                     or ""
@@ -1507,6 +1678,20 @@ class SingleTaskManager:
                         ),
                     )
                     if transition_error:
+                        reported_total_pages = int(
+                            next_state.get("reportedTotalPages")
+                            or previous_total_pages
+                        )
+                        if (
+                            int(next_state.get("page") or 0)
+                            > reported_total_pages
+                        ):
+                            raise ResultWindowTruncated(
+                                "来源窗口无法提供第 "
+                                f"{int(next_state.get('page') or 0)} 页："
+                                f"站点仅声明 {reported_total_pages} 页，"
+                                "后续页返回重复结果，必须按年份拆分检索"
+                            )
                         raise ManualActionRequired(transition_error)
                     return next_state
 
@@ -1546,6 +1731,10 @@ class SingleTaskManager:
                     query=query,
                     library=library,
                     year=year,
+                    province=combination.province or config.province,
+                    timeliness=(
+                        combination.timeliness or config.timeliness
+                    ),
                     expected_page=expected,
                 )
                 self._safe_boundary(
@@ -1556,6 +1745,53 @@ class SingleTaskManager:
                 )
                 page = int(state.get("page") or expected)
                 total_pages = int(state.get("totalPages") or total_pages)
+
+        if year_partition.get("yearCounts"):
+            scope_query = str(year_partition.get("query") or "")
+            scope_library = str(year_partition.get("library") or "")
+            partition_year_set = set(partition_years)
+            fallback_identities = 0
+            for record in journal_records:
+                if (
+                    str(record["query"]) != scope_query
+                    or str(record["library"]) != scope_library
+                    or str(record["effectiveYear"])
+                    not in partition_year_set
+                ):
+                    continue
+                for raw_row in record.get("rows") or []:
+                    row = dict(raw_row)
+                    row["query"] = scope_query
+                    row["library"] = scope_library
+                    row["year"] = str(record["effectiveYear"])
+                    identity = (
+                        keyword_result_identity(row)
+                        if config.match_mode == "keyword"
+                        else policy_identity(row)
+                    )
+                    scope_identities = identities_by_scope.setdefault(
+                        (
+                            scope_library,
+                            str(record["effectiveYear"]),
+                        ),
+                        set(),
+                    )
+                    if identity not in scope_identities:
+                        fallback_identities += 1
+                    scope_identities.add(identity)
+                    rows_by_identity.setdefault(identity, row)
+            if fallback_identities:
+                self.logger.write(
+                    "info",
+                    "single.year-partition-journal-supplement",
+                    "Supplemented year partitions from accepted journal rows",
+                    {
+                        "query": scope_query,
+                        "library": scope_library,
+                        "fallbackIdentities": fallback_identities,
+                        "downloadsStarted": 0,
+                    },
+                )
 
         if (
             config.year_selection.mode == "all"
@@ -1585,21 +1821,270 @@ class SingleTaskManager:
                 int(stats.get("rowsRead") or 0)
                 for stats in partition_stats
             )
+            year_counts = {
+                str(year): int(count or 0)
+                for year, count in dict(
+                    year_partition.get("yearCounts") or {}
+                ).items()
+            }
+            scope_query = str(year_partition.get("query") or "")
+            scope_library = str(year_partition.get("library") or "")
+            current_session = getattr(
+                adapter,
+                "current_search_session",
+                None,
+            )
             if (
-                actual_results != expected_results
-                or actual_rows != expected_results
+                year_counts
+                and (
+                    current_session is None
+                    or str(current_session.query or "") != scope_query
+                    or str(current_session.library or "") != scope_library
+                    or str(current_session.year or "") != "全部年份"
+                    or str(current_session.province or "")
+                    != str(config.province or "")
+                )
             ):
+                state = adapter.search(
+                    keyword=scope_query,
+                    match_mode=config.match_mode,
+                    library=scope_library,
+                    year="全部年份",
+                    province=config.province,
+                    timeliness=config.timeliness,
+                    page_size=config.page_size,
+                )
+                current_session = SearchSession.from_dict(
+                    state.get("searchSession")
+                )
+                if (
+                    current_session is None
+                    or current_session.query != scope_query
+                    or current_session.library != scope_library
+                    or current_session.year != "全部年份"
+                    or current_session.province != config.province
+                ):
+                    raise ResultWindowTruncated(
+                        "无法建立最终年份核验所需的受控检索上下文"
+                    )
+            current_year_counts = (
+                {
+                    str(entry["value"]): int(entry.get("count") or 0)
+                    for entry in adapter.available_filter_entries("year")
+                    if int(entry.get("count") or 0) > 0
+                    and str(entry["value"]) in set(partition_years)
+                }
+                if year_counts
+                and hasattr(adapter, "available_filter_entries")
+                else {}
+            )
+            if year_counts and current_year_counts != year_counts:
+                if not _source_drift_rescan and current_session is not None:
+                    self._restart_scan_for_year_count_drift(
+                        store=store,
+                        task_id=task_id,
+                        journal=journal,
+                        current=current_session,
+                        previous_year_counts=year_counts,
+                        current_year_counts=current_year_counts,
+                    )
+                    return self._collect(
+                        task_id,
+                        config,
+                        adapter,
+                        store,
+                        controller,
+                        _restart_after_universe_change=False,
+                        _source_drift_rescan=True,
+                    )
+                raise ResultWindowTruncated(
+                    "年份结果集在完整扫描期间再次变化："
+                    f"计划 {year_counts}，当前 {current_year_counts}"
+                )
+            current_checkpoint = dict(
+                (store.get_task(task_id) or {}).get("checkpoint")
+                or {}
+            )
+            recent_universe_changes = list(
+                current_checkpoint.get("scanUniverseChanges") or []
+            )
+            has_year_count_drift = bool(
+                recent_universe_changes
+                and recent_universe_changes[-1].get("reason")
+                == "year-result-count-drift"
+            )
+            if _source_drift_rescan or has_year_count_drift:
+                existing_stable_identities = {
+                    str(item.get("policyKey") or "")
+                    for item in store.list_task_items(task_id)
+                    if str(item.get("policyKey") or "").startswith("id:")
+                }
+                discovered_stable_identities = {
+                    (
+                        keyword_result_identity(row)
+                        if config.match_mode == "keyword"
+                        else policy_identity(row)
+                    )
+                    for row in rows_by_identity.values()
+                }
+                missing_existing = sorted(
+                    existing_stable_identities
+                    - discovered_stable_identities
+                )
+                if missing_existing:
+                    checkpoint = dict(
+                        (store.get_task(task_id) or {}).get(
+                            "checkpoint"
+                        )
+                        or {}
+                    )
+                    changes = list(
+                        checkpoint.get("scanUniverseChanges") or []
+                    )
+                    archive_path = str(
+                        (changes[-1] if changes else {}).get(
+                            "archivedJournal"
+                        )
+                        or ""
+                    )
+                    archived_missing = (
+                        self._archived_rows_for_missing_identities(
+                            archive_path=archive_path,
+                            missing=set(missing_existing),
+                            match_mode=config.match_mode,
+                        )
+                    )
+                    still_missing = sorted(
+                        set(missing_existing)
+                        - set(archived_missing)
+                    )
+                    if still_missing:
+                        raise ResultWindowTruncated(
+                            "受控重扫未复现既有任务项，拒绝重排或重复下载："
+                            f"缺失 {still_missing[:20]}；"
+                            f"重扫身份 "
+                            f"{sorted(discovered_stable_identities)[:20]}"
+                        )
+                    supplement_by_year = {
+                        str(year): list(values)
+                        for year, values in dict(
+                            year_partition.get(
+                                "sourceDriftSupplementIdentitiesByYear"
+                            )
+                            or {}
+                        ).items()
+                    }
+                    for identity, archived in archived_missing.items():
+                        row = dict(archived["row"])
+                        year = str(archived["year"])
+                        rows_by_identity[identity] = row
+                        raw_identity = str(
+                            row.get("policyId")
+                            or row.get("url")
+                            or identity
+                        )
+                        values = list(
+                            supplement_by_year.get(year) or []
+                        )
+                        if raw_identity not in values:
+                            values.append(raw_identity)
+                        supplement_by_year[year] = values
+                    year_partition[
+                        "sourceDriftSupplementIdentitiesByYear"
+                    ] = supplement_by_year
+                    store.update_task(
+                        task_id,
+                        checkpoint={
+                            **checkpoint,
+                            "yearPartition": year_partition,
+                        },
+                    )
+            supplemental_ids_by_year = dict(
+                year_partition.get(
+                    "sourceDriftSupplementIdentitiesByYear"
+                )
+                or {}
+            )
+            for year, values in supplemental_ids_by_year.items():
+                scope_identities = identities_by_scope.setdefault(
+                    (scope_library, str(year)),
+                    set(),
+                )
+                expected = year_counts.get(str(year))
+                for value in values or []:
+                    if (
+                        expected is not None
+                        and len(scope_identities) >= expected
+                    ):
+                        break
+                    scope_identities.add(str(value))
+            scoped_identities = {
+                year: set(
+                    identities_by_scope.get(
+                        (scope_library, year),
+                        set(),
+                    )
+                )
+                for year in partition_years
+            }
+            all_scoped_identities: set[str] = set()
+            for identities in scoped_identities.values():
+                all_scoped_identities.update(identities)
+            actual_unique = sum(
+                len(identities)
+                for identities in scoped_identities.values()
+            )
+            year_mismatches = {
+                year: {
+                    "expected": expected,
+                    "actual": len(scoped_identities.get(year, set())),
+                }
+                for year, expected in year_counts.items()
+                if len(scoped_identities.get(year, set())) != expected
+            }
+            totals_valid = (
+                not year_counts
+                and actual_results == expected_results
+                and actual_rows == expected_results
+            ) or (
+                bool(year_counts)
+                and not year_mismatches
+            )
+            if not totals_valid:
                 raise ResultWindowTruncated(
                     "按年份拆分后结果数不一致："
                     f"期望 {expected_results}，"
                     f"结果数合计 {actual_results}，"
-                    f"实际读取 {actual_rows}"
+                    f"实际读取 {actual_rows}，"
+                    f"去重后 {actual_unique}，"
+                    f"年份差异 {year_mismatches}"
                 )
             year_partition.update(
                 {
                     "status": "complete",
-                    "actualResultCount": actual_results,
+                    "actualResultCount": (
+                        sum(year_counts.values())
+                        if year_counts
+                        else actual_results
+                    ),
                     "actualRowsRead": actual_rows,
+                    "actualUniqueResultCount": len(
+                        all_scoped_identities
+                    ),
+                    "yearMismatches": year_mismatches,
+                    "sourceUniverseDrift": (
+                        expected_results
+                        - sum(year_counts.values())
+                        if year_counts
+                        else 0
+                    ),
+                    "crossYearDuplicateCount": (
+                        actual_unique
+                        - len(all_scoped_identities)
+                        if year_counts
+                        else 0
+                    ),
+                    "currentYearCounts": current_year_counts,
                     "completedCombinations": len(partition_stats),
                 }
             )
@@ -1675,6 +2160,8 @@ class SingleTaskManager:
         query: str,
         library: str,
         year: str,
+        province: str | None = None,
+        timeliness: str | None = None,
         expected_page: int,
     ) -> SearchSession:
         request = SearchRequestIdentity(
@@ -1682,8 +2169,8 @@ class SingleTaskManager:
             match_mode=config.match_mode,
             library=library,
             year=year,
-            province=config.province,
-            timeliness=config.timeliness,
+            province=province or config.province,
+            timeliness=timeliness or config.timeliness,
             requested_page_size=config.page_size,
         )
         try:
@@ -1717,6 +2204,37 @@ class SingleTaskManager:
                 "恢复处理前当前页面未通过选择器身份核验"
             )
 
+    @staticmethod
+    def _restore_adapter_search_context(
+        adapter: PkulawAdapter,
+        store: TaskStore,
+        task_id: str,
+        config: SingleTaskConfig,
+    ) -> None:
+        task = store.get_task(task_id)
+        checkpoint = dict((task or {}).get("checkpoint") or {})
+        raw_session = checkpoint.get("searchIdentity")
+        if not isinstance(raw_session, dict):
+            return
+        try:
+            session = SearchSession.from_dict(raw_session)
+        except (KeyError, TypeError, ValueError):
+            return
+        request = SearchRequestIdentity(
+            query=session.query,
+            match_mode=session.match_mode or config.match_mode,
+            library=session.library,
+            year=session.year,
+            province=session.province,
+            timeliness=session.timeliness,
+            requested_page_size=(
+                session.requested_page_size or config.page_size
+            ),
+        )
+        adapter.current_search_request = request
+        adapter.current_search_session = session
+        adapter.search_url = session.url
+
     def _scan_journal(
         self,
         task_id: str,
@@ -1733,6 +2251,291 @@ class SingleTaskManager:
             ),
         )
 
+    def _restart_scan_for_year_count_drift(
+        self,
+        *,
+        store: TaskStore,
+        task_id: str,
+        journal: ScanJournal,
+        current: SearchSession,
+        previous_year_counts: dict[str, int],
+        current_year_counts: dict[str, int],
+    ) -> Path:
+        archive_path = journal.quarantine(
+            "SOURCE_YEAR_COUNTS_CHANGED"
+        )
+        checkpoint = dict(
+            (store.get_task(task_id) or {}).get("checkpoint") or {}
+        )
+        year_partition = dict(checkpoint.get("yearPartition") or {})
+        previous_expected = int(
+            year_partition.get("expectedResultCount") or 0
+        )
+        current_expected = sum(current_year_counts.values())
+        observed_at = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(),
+        )
+        history = list(checkpoint.get("scanUniverseChanges") or [])
+        history.append(
+            {
+                "reason": "year-result-count-drift",
+                "previousYearCounts": dict(previous_year_counts),
+                "currentYearCounts": dict(current_year_counts),
+                "previousExpectedResultCount": previous_expected,
+                "currentExpectedResultCount": current_expected,
+                "previousSearchId": current.search_id,
+                "currentSearchId": current.search_id,
+                "previousResultSignature": current.result_signature,
+                "currentResultSignature": current.result_signature,
+                "existingItemCount": len(
+                    store.list_task_items(task_id)
+                ),
+                "archivedJournal": str(archive_path),
+                "observedAt": observed_at,
+                "downloadsStarted": 0,
+            }
+        )
+        year_partition.update(
+            {
+                "status": "running",
+                "yearCounts": dict(current_year_counts),
+                "expectedResultCount": current_expected,
+                "preDriftYearCounts": dict(previous_year_counts),
+                "preDriftExpectedResultCount": previous_expected,
+                "sourceDriftReconciledAt": observed_at,
+            }
+        )
+        checkpoint.update(
+            {
+                "yearPartition": year_partition,
+                "scanUniverseChanges": history,
+                "currentAction": "year-count-drift-rescan",
+            }
+        )
+        self._update_task(
+            store,
+            task_id,
+            status="running",
+            current_stage="rescanning-year-count-drift",
+            clear_error=True,
+            checkpoint=checkpoint,
+        )
+        self._emit(
+            "single.year-count-drift-rescan",
+            {
+                "taskId": task_id,
+                "previousYearCounts": dict(previous_year_counts),
+                "currentYearCounts": dict(current_year_counts),
+                "existingItemCount": len(
+                    store.list_task_items(task_id)
+                ),
+                "archivedJournal": str(archive_path),
+                "downloadsStarted": 0,
+            },
+        )
+        return archive_path
+
+    def _restart_scan_for_changed_universe(
+        self,
+        *,
+        store: TaskStore,
+        task_id: str,
+        journal: ScanJournal,
+        previous: dict[str, Any],
+        current: SearchSession,
+        reason: str,
+    ) -> Path:
+        if store.list_task_items(task_id):
+            raise ScanJournalError(
+                "SCAN_JOURNAL_IDENTITY_MISMATCH",
+                "结果集已变化但任务已有正式任务项；禁止自动重扫",
+            )
+        archive_path = journal.quarantine(
+            f"RESULT_UNIVERSE_CHANGED:{reason}"
+        )
+        checkpoint = dict(
+            (store.get_task(task_id) or {}).get("checkpoint") or {}
+        )
+        history = list(checkpoint.get("scanUniverseChanges") or [])
+        history.append(
+            {
+                "reason": reason,
+                "previousPage": int(previous.get("page") or 0),
+                "previousSearchId": str(
+                    previous.get("searchId") or ""
+                ),
+                "previousResultSignature": str(
+                    previous.get("resultSignature") or ""
+                ),
+                "previousResultCount": int(
+                    previous.get("resultCount") or 0
+                ),
+                "currentSearchId": current.search_id,
+                "currentResultSignature": current.result_signature,
+                "currentResultCount": current.result_count,
+                "archivedJournal": str(archive_path),
+                "observedAt": current.observed_at,
+                "downloadsStarted": 0,
+            }
+        )
+        checkpoint.update(
+            {
+                "currentAction": "scan-universe-restarted",
+                "scanUniverseChanges": history,
+                "searchId": current.search_id,
+                "searchIdentity": current.to_dict(),
+            }
+        )
+        self._update_task(
+            store,
+            task_id,
+            status="running",
+            current_stage="scanning-new-result-universe",
+            clear_error=True,
+            checkpoint=checkpoint,
+        )
+        self._emit(
+            "single.scan-universe-restarted",
+            {
+                "taskId": task_id,
+                "reason": reason,
+                "archivedJournal": str(archive_path),
+                "previousResultSignature": str(
+                    previous.get("resultSignature") or ""
+                ),
+                "currentResultSignature": current.result_signature,
+                "previousResultCount": int(
+                    previous.get("resultCount") or 0
+                ),
+                "currentResultCount": current.result_count,
+                "downloadsStarted": 0,
+            },
+        )
+        return archive_path
+
+    def _resolve_year_partition_plan(
+        self,
+        adapter: PkulawAdapter,
+        config: SingleTaskConfig,
+        year_partition: dict[str, Any],
+        checkpoint: dict[str, Any],
+    ) -> dict[str, Any]:
+        existing_counts = {
+            str(year): int(count or 0)
+            for year, count in dict(
+                year_partition.get("yearCounts") or {}
+            ).items()
+        }
+        expected_scope_count = int(
+            year_partition.get("expectedResultCount") or 0
+        )
+        existing_plan_plausible = bool(existing_counts) and (
+            expected_scope_count <= 0
+            or sum(existing_counts.values())
+            <= expected_scope_count
+            + max(100, int(expected_scope_count * 0.1))
+        )
+        if (
+            config.year_selection.mode != "all"
+            or year_partition.get("status") not in {"required", "running"}
+            or existing_plan_plausible
+            or not hasattr(adapter, "available_filter_entries")
+        ):
+            return year_partition
+        scope_query = str(year_partition.get("query") or "")
+        scope_library = str(year_partition.get("library") or "")
+        current_session = getattr(adapter, "current_search_session", None)
+        if (
+            hasattr(adapter, "search")
+            and (
+                current_session is None
+                or str(current_session.library or "") != scope_library
+                or str(current_session.year or "") != "全部年份"
+                or str(current_session.province or "")
+                != str(config.province or "")
+            )
+        ):
+            state = adapter.search(
+                keyword=scope_query,
+                match_mode=config.match_mode,
+                library=scope_library,
+                year="全部年份",
+                province=config.province,
+                timeliness=config.timeliness,
+                page_size=config.page_size,
+            )
+            session = SearchSession.from_dict(state.get("searchSession"))
+            if (
+                session is None
+                or session.query != scope_query
+                or session.library != scope_library
+                or session.year != "全部年份"
+                or session.province != config.province
+            ):
+                raise ResultWindowTruncated(
+                    "无法建立年份窗口计划所需的受控检索上下文"
+                )
+        try:
+            year_entries = adapter.available_filter_entries("year")
+            province_entries = adapter.available_filter_entries("province")
+        except Exception as exc:
+            raise ResultWindowTruncated(
+                "年份窗口仍超过来源上限，但无法读取省市筛选树："
+                f"{exc}"
+            ) from exc
+        year_counts = {
+            str(entry["value"]): int(entry.get("count") or 0)
+            for entry in year_entries
+            if int(entry.get("count") or 0) > 0
+        }
+        province_values = [
+            str(entry["value"])
+            for entry in province_entries
+            if int(entry.get("count") or 0) > 0
+            and not str(entry["value"]).startswith("全部")
+        ]
+        provinces = list(dict.fromkeys(province_values))
+        result_window = dict(checkpoint.get("resultWindow") or {})
+        reported_pages = max(
+            1,
+            int(result_window.get("reportedTotalPages") or 20),
+        )
+        capacity = max(
+            1,
+            int(
+                year_partition.get("partitionPageCapacity")
+                or int(config.page_size) * reported_pages
+            ),
+        )
+        province_partitions = {
+            year: provinces
+            for year, count in year_counts.items()
+            if count > capacity and provinces
+        }
+        updated = {
+            **year_partition,
+            "status": "running",
+            "yearCounts": year_counts,
+            "provincePartitions": province_partitions,
+            "partitionPageCapacity": capacity,
+            "reportedTotalPages": reported_pages,
+        }
+        if not province_partitions:
+            return updated
+        self.logger.write(
+            "info",
+            "single.year-window-partitioned",
+            "Year result windows split by issuing authority",
+            {
+                "capacity": capacity,
+                "provinceCount": len(provinces),
+                "years": sorted(province_partitions),
+                "downloadsStarted": 0,
+            },
+        )
+        return updated
+
     @staticmethod
     def _year_partition_combinations(
         config: SingleTaskConfig,
@@ -1741,6 +2544,7 @@ class SingleTaskManager:
         *,
         scope_query: str,
         scope_library: str,
+        province_partitions: dict[str, list[str]],
     ) -> list[SearchCombination]:
         combinations: list[SearchCombination] = []
         for query_index, query in enumerate(config.queries):
@@ -1754,17 +2558,31 @@ class SingleTaskManager:
                     else [config.year_selection.years[0]]
                 )
                 for year_index, year in enumerate(combination_years):
-                    combinations.append(
-                        SearchCombination(
-                            query=query,
-                            library=library,
-                            year=year,
-                            query_index=query_index,
-                            library_index=library_index,
-                            year_index=year_index,
-                            combination_index=len(combinations) + 1,
-                        )
+                    provinces = (
+                        province_partitions.get(year)
+                        if scoped
+                        else None
                     )
+                    for province in provinces or [""]:
+                        combinations.append(
+                            SearchCombination(
+                                query=query,
+                                library=library,
+                                year=year,
+                                query_index=query_index,
+                                library_index=library_index,
+                                year_index=year_index,
+                                combination_index=(
+                                    len(combinations) + 1
+                                ),
+                                province=province,
+                                partition_key=(
+                                    f"year={year}|province={province}"
+                                    if province
+                                    else ""
+                                ),
+                            )
+                        )
         return combinations
 
     def _seal_scan_journal(
@@ -1793,6 +2611,51 @@ class SingleTaskManager:
         return summary
 
     @staticmethod
+    def _archived_rows_for_missing_identities(
+        *,
+        archive_path: str,
+        missing: set[str],
+        match_mode: str,
+    ) -> dict[str, dict[str, Any]]:
+        if not missing or not archive_path:
+            return {}
+        path = Path(archive_path)
+        if not path.is_file():
+            return {}
+        found: dict[str, dict[str, Any]] = {}
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                year = str(record.get("effectiveYear") or "")
+                for raw_row in record.get("rows") or []:
+                    if not isinstance(raw_row, dict):
+                        continue
+                    row = dict(raw_row)
+                    identity = (
+                        keyword_result_identity(row)
+                        if match_mode == "keyword"
+                        else policy_identity(row)
+                    )
+                    if (
+                        identity in missing
+                        and identity not in found
+                    ):
+                        found[identity] = {
+                            "row": row,
+                            "year": year,
+                        }
+                if set(found) == missing:
+                    break
+        return found
+
+    @staticmethod
     def _scan_from_journal_record(
         record: dict[str, Any],
     ) -> dict[str, Any]:
@@ -1800,6 +2663,13 @@ class SingleTaskManager:
             "query": record["query"],
             "library": record["library"],
             "year": record["effectiveYear"],
+            "partitionKey": str(record.get("partitionKey") or ""),
+            "searchedProvince": str(
+                record.get("selectedProvince") or ""
+            ),
+            "searchedTimeliness": str(
+                record.get("selectedTimeliness") or ""
+            ),
             "page": record["page"],
             "totalPages": record["totalPages"],
             "reportedTotalPages": record.get("reportedTotalPages"),
@@ -2039,7 +2909,9 @@ class SingleTaskManager:
             task_id,
             current_action="after-detail",
         )
-        if normalize_title(detail.get("title", "")) != normalize_title(candidate.get("title", "")):
+        if normalize_detail_title(
+            detail.get("title", "")
+        ) != normalize_detail_title(candidate.get("title", "")):
             raise ValidationError(
                 "DETAIL_TITLE_MISMATCH",
                 f"详情标题与候选不一致：{detail.get('title')} != {candidate.get('title')}",

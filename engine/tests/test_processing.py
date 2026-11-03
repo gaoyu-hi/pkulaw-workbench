@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,7 @@ from pkulaw_engine.processing_task import (
     DataProcessingManager,
     can_use_government_fallback,
     materialize_zip_member,
+    select_processable_items,
 )
 from pkulaw_engine.processors.documents import (
     DocumentExtractionError,
@@ -126,6 +128,107 @@ class ProcessingTests(unittest.TestCase):
         self.assertEqual(snapshot["failed"], 0)
         self.assertEqual(snapshot["pendingReview"], 3)
         self.assertLess(snapshot["overall"], 1.0)
+
+    def test_processing_uses_only_items_with_real_download_sources(self) -> None:
+        from pkulaw_engine.controls.task_control import TaskControl
+
+        database = self.root / "qualified-sources.sqlite3"
+        store = TaskStore(database)
+        task = store.create_task(
+            name="只处理合格下载源",
+            mode="single",
+            task_input={"queries": ["碳中和"], "matchMode": "keyword"},
+            output_dir=str(self.root / "qualified-output"),
+        )
+        source = self.root / "qualified.docx"
+        document = Document()
+        document.add_paragraph(
+            "第一章 总则\n"
+            "第一条 这是具备真实下载来源并应进入数据处理的完整政策正文。\n"
+            "第二条 正文内容完整。"
+        )
+        document.save(source)
+        completed = store.upsert_task_item(
+            task["id"],
+            policy_key="id:qualified",
+            title="合格来源政策",
+            status="completed",
+            source_type="北大法宝原件",
+            payload={
+                "selectedCandidate": {
+                    "policyId": "qualified",
+                    "title": "合格来源政策",
+                    "url": "https://example.test/qualified",
+                },
+                "downloadedFile": str(source),
+                "detail": {"title": "合格来源政策"},
+            },
+            current_stage="completed",
+        )
+        for status, policy_key in (
+            ("failed", "id:failed-no-source"),
+            ("pending", "id:pending-no-source"),
+            ("skipped", "id:skipped-no-source"),
+        ):
+            store.upsert_task_item(
+                task["id"],
+                policy_key=policy_key,
+                title=f"{status} 无来源政策",
+                status=status,
+                source_type="",
+                payload={},
+                error={
+                    "code": (
+                        "OUT_OF_SCOPE_BY_SAMPLING_ACCEPTANCE"
+                        if status == "skipped"
+                        else "SOURCE_NOT_COMPLETED"
+                    ),
+                    "message": "没有可处理下载源",
+                },
+            )
+        store.upsert_processing_run(
+            "run-qualified",
+            task["id"],
+            status="pending",
+            progress=0.0,
+            current_stage="pending",
+        )
+        manager = DataProcessingManager(
+            database,
+            MagicMock(),
+            JsonLineLogger(self.root / "qualified.jsonl"),
+            lambda *_args: None,
+        )
+        manager._run(
+            "run-qualified",
+            str(task["id"]),
+            {"governmentFallback": False},
+            TaskControl(str(task["id"])),
+        )
+
+        run = store.get_processing_run("run-qualified")
+        documents = store.list_policy_documents(task["id"])
+        items = {
+            item["policyKey"]: item["status"]
+            for item in store.list_task_items(task["id"])
+        }
+        assert run is not None
+        self.assertEqual(run["status"], "completed")
+        self.assertEqual(run["summary"]["totalDocuments"], 1)
+        self.assertEqual(
+            [document["policyKey"] for document in documents],
+            [completed["policyKey"]],
+        )
+        self.assertEqual(
+            items,
+            {
+                "id:qualified": "completed",
+                "id:failed-no-source": "failed",
+                "id:pending-no-source": "pending",
+                "id:skipped-no-source": "skipped",
+            },
+        )
+        store.close()
 
     def test_stop_does_not_overwrite_newer_completed_checkpoint(self) -> None:
         import time
@@ -265,6 +368,43 @@ class ProcessingTests(unittest.TestCase):
             )
         )
 
+    def test_completed_government_source_remains_processable(self) -> None:
+        task = {
+            "mode": "single",
+            "input": {"matchMode": "title"},
+        }
+        item = {
+            "status": "completed",
+            "payload": {
+                "governmentDocumentId": "government-document-1",
+                "sourceUrl": "https://example.gov.cn/policy",
+            },
+        }
+
+        self.assertTrue(
+            can_use_government_fallback(
+                task,
+                item,
+                {"governmentFallback": True},
+            )
+        )
+        self.assertEqual(
+            select_processable_items(
+                task,
+                [item],
+                {"governmentFallback": True},
+            ),
+            [item],
+        )
+        self.assertEqual(
+            select_processable_items(
+                task,
+                [item],
+                {"governmentFallback": False},
+            ),
+            [],
+        )
+
     def test_docx_extraction_and_invalid_docx(self) -> None:
         from pkulaw_engine.processors.documents import extract_document
 
@@ -325,6 +465,59 @@ class ProcessingTests(unittest.TestCase):
                     result.converter_sha256,
                     "1dde37af1bb049c03e71c9d20eb99a2a3e011fe9170306b3a154be5c8515788f",
                 )
+
+    def test_bundled_converter_receives_short_temporary_path(
+        self,
+    ) -> None:
+        from pkulaw_engine.processors import documents
+
+        sample = next(
+            (Path(__file__).with_name("fixtures") / "real-word-doc").glob("*.doc")
+        )
+        long_dir = self.root
+        for index in range(8):
+            long_dir = long_dir / (
+                f"{index}-" + ("超长政策目录" * 8)
+            )
+        long_dir.mkdir(parents=True)
+        source = long_dir / "完整长标题政策样本.doc"
+        shutil.copy2(sample, source)
+        self.assertGreater(len(str(source)), 260)
+
+        def fake_runner(path: Path, _binary: Path) -> str:
+            self.assertLess(len(str(path)), 260)
+            self.assertTrue(path.is_file())
+            self.assertEqual(path.read_bytes(), sample.read_bytes())
+            return "这是通过短临时路径成功提取的完整政策正文内容。"
+
+        with (
+            patch.object(
+                documents,
+                "_validate_bundled_antiword",
+                return_value=None,
+            ),
+            patch.object(
+                documents,
+                "_run_bundled_antiword",
+                side_effect=fake_runner,
+            ),
+            patch.object(documents.shutil, "which", return_value=None),
+            patch.dict(
+                sys.modules,
+                {
+                    "win32com": None,
+                    "win32com.client": None,
+                    "pythoncom": None,
+                },
+            ),
+        ):
+            result = documents.extract_document(
+                source,
+                runtime_root=Path(__file__).parents[1],
+            )
+
+        self.assertIn("短临时路径", result.text)
+        self.assertEqual(result.converter_name, "antiword")
 
     def test_vendored_antiword_manifest_matches_locked_files(self) -> None:
         vendor_root = Path(__file__).parents[1] / "vendor" / "antiword"
@@ -737,6 +930,92 @@ class ProcessingTests(unittest.TestCase):
             self.assertEqual(result["bodyCompleteness"], "suspicious")
             self.assertEqual(result["reviewStatus"], "pending_review")
             self.assertTrue(Path(result["txtPath"]).is_file())
+        finally:
+            store.close()
+
+    def test_complete_detail_body_supersedes_suspicious_word_body(self) -> None:
+        database = self.root / "detail-fallback.sqlite3"
+        store = TaskStore(database)
+        try:
+            task = store.create_task(
+                name="详情正文补全",
+                mode="single",
+                task_input={"matchMode": "title"},
+                output_dir=str(self.root / "detail-fallback-output"),
+            )
+            word = self.root / "detail-fallback.docx"
+            document = Document()
+            for line in (
+                "目录",
+                "第一章 总则",
+                "第二章 工作要求",
+                "第三章 附则",
+                "第一章 总则",
+                "第一节 目的",
+                "Word 文件只保留了第一章正文。",
+                "第三章 附则",
+                "Word 文件只保留了第三章正文。",
+            ):
+                document.add_paragraph(line)
+            document.save(word)
+            page_body = "\n".join(
+                (
+                    "目录",
+                    "第一章 总则",
+                    "第二章 工作要求",
+                    "第三章 附则",
+                    "第一章 总则",
+                    "第一节 目的",
+                    "详情页第一章正文完整存在。",
+                    "第二章 工作要求",
+                    "详情页第二章正文完整存在。",
+                    "第三章 附则",
+                    "详情页第三章正文完整存在。",
+                )
+            )
+            item = store.upsert_task_item(
+                task["id"],
+                policy_key="id:detail-fallback",
+                title="详情页补全政策",
+                status="completed",
+                source_type="北大法宝原件",
+                payload={
+                    "selectedCandidate": {
+                        "policyId": "detail-fallback",
+                        "title": "详情页补全政策",
+                    },
+                    "downloadedFile": str(word),
+                    "detail": {
+                        "title": "详情页补全政策",
+                        "body": page_body,
+                    },
+                },
+            )
+            manager = DataProcessingManager(
+                database,
+                MagicMock(),
+                JsonLineLogger(self.root / "detail-fallback.jsonl"),
+                lambda *_args: None,
+            )
+
+            result = manager._process_single_item(
+                store,
+                task,
+                item,
+                self.root / "detail-fallback-source",
+                self.root / "detail-fallback-txt",
+                self.root / "detail-fallback-evidence",
+                self.root / "detail-fallback-pending",
+            )
+
+            self.assertEqual(result["status"], "processed")
+            self.assertEqual(result["sourceType"], "北大法宝原件")
+            self.assertEqual(result["textSourceType"], "detail-page-text")
+            self.assertEqual(result["extractionMethod"], "detail-page-fallback")
+            self.assertEqual(result["bodyCompleteness"], "complete")
+            self.assertEqual(result["reviewStatus"], "not_required")
+            text = Path(result["txtPath"]).read_text(encoding="utf-8")
+            self.assertIn("详情页第二章正文完整存在", text)
         finally:
             store.close()
 

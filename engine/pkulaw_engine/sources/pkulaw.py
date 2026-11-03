@@ -18,7 +18,7 @@ from ..browser_bridge import BrowserBridge
 from ..logging_utils import JsonLineLogger
 from ..policy import extract_policy_id
 from ..storage import ValidationError
-from .access_state import read_access_state
+from .access_state import read_stable_access_state
 from .page_navigation import PageNavigationError, transition_next_page
 from .selector_profile import (
     SelectorProfile,
@@ -40,6 +40,21 @@ from .search_transaction import (
     filter_values_match,
     result_signature,
 )
+
+
+V6_FILTER_TREE_SELECTORS: dict[str, str] = {
+    "year": (
+        '#leftContent .recursion-tree:has(a.fold[searchname="IssueDate"])'
+    ),
+    "province": (
+        "#leftContent .recursion-tree"
+        ':has(a.fold[searchname="IssueDepartment"])'
+    ),
+    "timeliness": (
+        "#leftContent .recursion-tree"
+        ':has(a.fold[searchname="TimelinessDic"])'
+    ),
+}
 
 
 class SourceAccessError(RuntimeError):
@@ -72,6 +87,10 @@ class SelectorUnstable(PageStructureChanged):
 
 class DownloadUnclear(SourceAccessError):
     code = "DOWNLOAD_UNCLEAR"
+
+
+class DetailPageUnavailable(SourceAccessError):
+    code = "DETAIL_PAGE_UNAVAILABLE"
 
 
 class YearFilterUnavailable(SourceAccessError):
@@ -354,10 +373,34 @@ class PkulawAdapter:
     def next_page(self, expected_page: int) -> dict[str, Any]:
         self._ensure_operation_ready("read-results")
         with self.bridge.transaction() as tab:
-            before = self._attach_current_session(self._read_results(tab))
-            current = before.get("page")
-            if current == expected_page:
-                return before
+            raw_before = self._read_results(tab)
+            current = int(raw_before.get("page") or 0)
+            session_page = (
+                int(self.current_search_session.page or 0)
+                if self.current_search_session is not None
+                else 0
+            )
+            if current == expected_page and (
+                self.current_search_session is None
+                or session_page == expected_page
+            ):
+                return self._attach_current_session(raw_before)
+            if (
+                current == expected_page
+                and self.current_search_session is not None
+                and session_page != expected_page
+            ):
+                # The site can advance the visible page number before replacing
+                # the previous result rows. Treat the old SearchSession as the
+                # transition origin so the controlled form fallback must prove
+                # a new page identity/signature.
+                before = self._attach_search_session(
+                    raw_before,
+                    self.current_search_session,
+                )
+                before["page"] = session_page
+            else:
+                before = self._attach_current_session(raw_before)
             try:
                 allow_direct_page_fallback = bool(
                     self.current_search_session
@@ -493,10 +536,10 @@ class PkulawAdapter:
                 }
                 for row in batch
             ]
-            result = tab.run_js(
-                f"""
+            expected_json = json.dumps(expected, ensure_ascii=False)
+            apply_script = f"""
                 return (() => {{
-                  const expected = {json.dumps(expected, ensure_ascii=False)};
+                  const expected = {expected_json};
                   const norm = value => (value || '').replace(/\\s+/g, '').trim();
                   const cards = [...document.querySelectorAll({json.dumps(self.selectors["resultLink"])})]
                     .map(anchor => anchor.closest('.t')).filter(Boolean);
@@ -528,10 +571,65 @@ class PkulawAdapter:
                   }};
                 }})()
                 """
-            ) or {}
-            if not result.get("ok"):
-                raise PageStructureChanged(f"批量勾选核验失败：{result!r}")
-            return result
+            observe_script = f"""
+                return (() => {{
+                  const expected = {expected_json};
+                  const norm = value => (value || '').replace(/\\s+/g, '').trim();
+                  const cards = [...document.querySelectorAll({json.dumps(self.selectors["resultLink"])})]
+                    .map(anchor => anchor.closest('.t')).filter(Boolean);
+                  const rows = cards.map(card => ({{
+                    box: card.querySelector({json.dumps(self.selectors["batchCheckbox"])}),
+                    label: card.querySelector({json.dumps(self.selectors["batchSort"])}),
+                    anchor: card.querySelector('h4 a[href*=".html"]')
+                  }})).filter(row => row.box && row.label && row.anchor);
+                  const actual = rows
+                    .filter(row => row.box.checked)
+                    .map(row => String(row.box.value || ''));
+                  const matches = rows.map(row => ({{
+                    number:Number((row.label.innerText || row.label.textContent || '')
+                      .replace(/[^0-9]/g, '')),
+                    id:String(row.box.value || ''),
+                    title:norm(row.anchor.innerText || row.anchor.textContent),
+                    checked:!!row.box.checked
+                  }}));
+                  return {{
+                    ok: matches.length >= expected.length &&
+                      actual.length === expected.length &&
+                      expected.every(item => matches.some(row =>
+                        row.number === item.number &&
+                        row.id === item.id &&
+                        row.title === norm(item.title) &&
+                        row.checked
+                      )),
+                    actual,
+                    matches
+                  }};
+                }})()
+                """
+            last_observation: dict[str, Any] = {}
+            for _correction in range(4):
+                applied = tab.run_js(apply_script) or {}
+                if not applied.get("ok"):
+                    raise PageStructureChanged(
+                        f"批量勾选核验失败：{applied!r}"
+                    )
+                stable_samples = 0
+                for _sample in range(12):
+                    time.sleep(0.25)
+                    last_observation = tab.run_js(observe_script) or {}
+                    if not last_observation.get("ok"):
+                        break
+                    stable_samples += 1
+                    if stable_samples >= 12:
+                        return {
+                            **applied,
+                            "stableSamples": stable_samples,
+                            "verification": last_observation,
+                        }
+            raise PageStructureChanged(
+                "批量勾选未能保持稳定："
+                f"{last_observation!r}"
+            )
 
     def verify_batch_selection(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
         self._ensure_operation_ready("select-batch")
@@ -565,7 +663,7 @@ class PkulawAdapter:
                     title:norm(row.anchor.innerText || row.anchor.textContent),
                     checked:!!row.box.checked
                   }}));
-                  const exactlyExpected = matches.length === expected.length &&
+                  const exactlyExpected = matches.length >= expected.length &&
                     expected.every(item => matches.some(row =>
                       row.number === item.number &&
                       row.id === item.id &&
@@ -585,6 +683,44 @@ class PkulawAdapter:
                 }})()
                 """
             ) or {}
+            matches = list(result.get("matches") or [])
+            if matches:
+                normalized_expected = {
+                    (
+                        int(item["number"]),
+                        str(item["id"]),
+                        "".join(str(item["title"]).split()),
+                    )
+                    for item in expected
+                }
+                normalized_matches = {
+                    (
+                        int(row.get("number") or 0),
+                        str(row.get("id") or ""),
+                        "".join(str(row.get("title") or "").split()),
+                    )
+                    for row in matches
+                }
+                checked = [
+                    str(row.get("id") or "")
+                    for row in matches
+                    if bool(row.get("checked"))
+                ]
+                result = {
+                    **result,
+                    "ok": (
+                        len(matches) >= len(expected)
+                        and normalized_expected.issubset(normalized_matches)
+                        and len(checked) == len(expected)
+                        and set(checked) == {
+                            str(item["id"]) for item in expected
+                        }
+                    ),
+                    "matches": matches,
+                    "checked": checked,
+                    "expectedCount": len(expected),
+                    "actualCount": len(matches),
+                }
             if not result.get("ok"):
                 raise PageStructureChanged(
                     f"批次行或勾选身份核验失败：{result!r}"
@@ -700,6 +836,17 @@ class PkulawAdapter:
                 time.sleep(0.35)
                 state = self._read_access_state(tab)
                 self._raise_for_access(state)
+                server_error = tab.run_js(
+                    """
+                    const text = document.body?.innerText || '';
+                    return text.includes('服务器无法处理您的请求') ||
+                      text.includes('您访问的页面不存在');
+                    """
+                )
+                if server_error:
+                    raise DetailPageUnavailable(
+                        "详情页返回服务器错误或页面不存在"
+                    )
                 ready = tab.run_js(
                     f"return !!document.querySelector({json.dumps(self.selectors['detailTitle'])});"
                 )
@@ -803,19 +950,33 @@ class PkulawAdapter:
                     const trigger = menu && menu.querySelector(':scope > span.text');
                     if (trigger && !visible(element)) trigger.click();
                     element.click();
-                    return {{ok:true, method:'fullWord'}};
+                    return JSON.stringify({{ok:true, method:'fullWord'}});
                   }}
                   const buttons = [...document.querySelectorAll('a,button,[role="button"]')];
                   element = buttons.find(item => (item.innerText || item.textContent || '')
                     .replace(/\\s+/g, '').includes('下载WORD'));
                   if (element) {{
                     element.click();
-                    return {{ok:true, method:'download-word-text'}};
+                    return JSON.stringify({{
+                      ok:true,
+                      method:'download-word-text'
+                    }});
                   }}
-                  return {{ok:false, reason:'word download control not found'}};
+                  return JSON.stringify({{
+                    ok:false,
+                    reason:'word download control not found'
+                  }});
                 }})()
                 """
             ) or {}
+            if isinstance(result, str):
+                try:
+                    decoded = json.loads(result)
+                except json.JSONDecodeError as exc:
+                    raise DownloadUnclear(
+                        f"Word 下载点击结果无法解析：{result[:200]}"
+                    ) from exc
+                result = decoded if isinstance(decoded, dict) else {}
             if not result.get("ok"):
                 raise DownloadUnclear(f"未找到 Word 下载入口：{result!r}")
             return result
@@ -2007,9 +2168,13 @@ class PkulawAdapter:
         """Public operation used by diagnostics and task gates."""
         return self._ensure_ungrouped_action()
 
-    def available_filter_values(self, key: str) -> list[str]:
+    def available_filter_entries(self, key: str) -> list[dict[str, Any]]:
+        filter_selectors = dict(self.selectors.get("filters") or {})
         root_selector = str(
-            (self.selectors.get("filters") or {}).get(key) or ""
+            filter_selectors.get(key)
+            or self.selectors.get(f"{key}Filter")
+            or V6_FILTER_TREE_SELECTORS.get(key)
+            or ""
         )
         if not root_selector:
             raise YearFilterUnavailable(f"{key} 筛选器不存在")
@@ -2023,9 +2188,19 @@ class PkulawAdapter:
                 return (() => {{
                   const clean = value => String(value || '')
                     .replace(/\\s+/g, ' ').trim();
-                  const root = document.querySelector({
-                    json.dumps(root_selector)
-                  });
+                  let root = null;
+                  try {{
+                    root = document.querySelector({
+                      json.dumps(root_selector)
+                    });
+                  }} catch (_) {{
+                    return {{
+                      ok:false,
+                      values:[],
+                      entries:[],
+                      reason:"invalid filter selector"
+                    }};
+                  }}
                   if (!root) return {{ok:false, values:[]}};
                   const select = root.matches?.('select')
                     ? root
@@ -2041,10 +2216,21 @@ class PkulawAdapter:
                         item.querySelector?.('.node_name')?.textContent ||
                         item.textContent
                       );
-                  const values = raw
-                    .map(clean)
-                    .map(value => (
-                      value.match(/(?:19|20)\\d{{2}}/)?.[0] || ''
+                  const entries = raw.map(clean).filter(Boolean).map(text => {{
+                    const counted = text.match(
+                      /^(.*?)\\s*[\\(（](\\d+)[\\)）]\\s*$/
+                    );
+                    return {{
+                      value:(counted ? counted[1] : text).trim(),
+                      label:text,
+                      count:counted ? Number(counted[2]) : null
+                    }};
+                  }}).filter(entry =>
+                    entry.value && !entry.value.startsWith('全部')
+                  );
+                  const values = entries
+                    .map(entry => (
+                      entry.value.match(/(?:19|20)\\d{{2}}/)?.[0] || ''
                     ))
                     .filter(value => value && !value.startsWith('全部'));
                   if (!values.length) {{
@@ -2055,25 +2241,62 @@ class PkulawAdapter:
                     }}
                   }}
                   return {{
-                    ok:values.length > 0,
-                    values:[...new Set(values)].sort().reverse()
+                    ok:entries.length > 0,
+                    values:[...new Set(values)].sort().reverse(),
+                    entries
                   }};
                 }})()
                 """
                 ) or {}
-            if last.get("ok") and last.get("values"):
+            if last.get("ok") and (
+                last.get("entries") or last.get("values")
+            ):
                 break
             time.sleep(0.25)
-        values = [
-            str(value)
-            for value in last.get("values") or []
-            if str(value).strip()
+        entries = [
+            {
+                "value": str(entry.get("value") or "").strip(),
+                "label": str(entry.get("label") or "").strip(),
+                "count": (
+                    int(entry["count"])
+                    if entry.get("count") is not None
+                    else None
+                ),
+            }
+            for entry in last.get("entries") or []
+            if isinstance(entry, dict)
+            and str(entry.get("value") or "").strip()
         ]
-        if not last.get("ok") or not values:
+        if not entries:
+            entries = [
+                {
+                    "value": str(value).strip(),
+                    "label": str(value).strip(),
+                    "count": None,
+                }
+                for value in last.get("values") or []
+                if str(value).strip()
+            ]
+        if not last.get("ok") or not entries:
             raise YearFilterUnavailable(
-                f"无法读取真实年份筛选选项：{last!r}"
+                f"无法读取真实筛选选项（{key}）：{last!r}"
             )
-        return values
+        return entries
+
+    def available_filter_values(self, key: str) -> list[str]:
+        entries = self.available_filter_entries(key)
+        values = [
+            str(entry["value"]).strip()
+            for entry in entries
+            if str(entry.get("value") or "").strip()
+        ]
+        if key == "year":
+            values = [
+                match.group(0)
+                for value in values
+                if (match := re.search(r"(?:19|20)\d{2}", value))
+            ]
+        return list(dict.fromkeys(values))
 
     def _ensure_ungrouped_action(self) -> dict[str, Any]:
         selector = str(self.selectors.get("groupUngroup") or "")
@@ -2470,7 +2693,10 @@ class PkulawAdapter:
         return state
 
     def _read_access_state(self, tab) -> dict[str, Any]:
-        return read_access_state(tab, self.selectors).as_task_state()
+        return read_stable_access_state(
+            tab,
+            self.selectors,
+        ).as_task_state()
 
     @staticmethod
     def _raise_for_access(state: dict[str, Any]) -> None:

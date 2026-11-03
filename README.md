@@ -9,6 +9,18 @@ Windows 桌面采集应用，采用 Electron、React、TypeScript 与 Python 后
 0 下载预览、网页缩放、任务归档/回收站、逐条 TXT、总目录 CSV/XLSX、
 来源证据和 Windows 免安装发布。
 
+0.2.2 阶段 I 已完成真实站点验收：正式碳中和扫描覆盖 19,040 个唯一结果和
+111 个分区；真实下载采用固定分层样本，包括 2,784 条 I-7 Word、25 条
+I-7S 跨年样本和 100 条 I-8S 地方双批次。
+
+## 团队使用
+
+完整的安装、登录、单篇、批量、数据处理、任务恢复、报告核验和故障处理说明见
+[`docs/PKULAW_WORKBENCH_0.2.2_TEAM_MANUAL_ZH.md`](docs/PKULAW_WORKBENCH_0.2.2_TEAM_MANUAL_ZH.md)。
+
+0.2.2 阶段 I 报告见
+[`docs/0.2.2_PHASE_I_TEST_REPORT.md`](docs/0.2.2_PHASE_I_TEST_REPORT.md)。
+
 ## 目录
 
 ```text
@@ -53,4 +65,6 @@ pnpm verify:portable
 - 逐篇精确标题缺失时可显式开启政府官网补全，宽泛关键词不会自动回退；
 - 政府官网正文整理件与原生附件分开标注；
 - 发布包内含 Python 3.14.7、DrissionPage、Electron 和文档，不要求目标电脑安装 Python；
-- 真实北大法宝尾页、上限确认、规模确认和一条真实 Word 下载仍需在目标校园网络环境小规模验收，本地夹具不能替代实际站点验收。
+- 真实北大法宝尾页、固定 Word 样本、地方双批次、数据处理、分页上限和规模确认已通过阶段 I 验收；
+- 当前版本面向 Windows x64 本地单机使用，不含多用户共享数据库、自动更新或代码签名；
+- 当前下载范围以 Word、原生 XLS 和 Word ZIP 为主，不含 WPS、PDF、纯文本、超文本、纯净版以及三个法宝联想选项。

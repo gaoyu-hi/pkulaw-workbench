@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from dataclasses import replace
@@ -8,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from pkulaw_engine.logging_utils import JsonLineLogger
 from pkulaw_engine.sources.pkulaw import (
+    DetailPageUnavailable,
     DownloadUnclear,
     FilterNotApplied,
     InstitutionQuotaReached,
@@ -244,6 +246,63 @@ class PkulawAdapterOperationTests(unittest.TestCase):
                 with self.assertRaises(ManualActionRequired):
                     self.adapter.next_page(5)
 
+    def test_page_window_extension_reloads_stale_matching_page_number(
+        self,
+    ) -> None:
+        request = self._request(library="local")
+        session = self._session(
+            request,
+            page=20,
+            total_pages=173,
+            reported_total_pages=20,
+            result_count=17224,
+            row_count=1,
+        )
+        self.adapter.current_search_request = request
+        self.adapter.current_search_session = session
+        self.adapter.search_url = session.url
+        stale = {
+            "page": 21,
+            "totalPages": 20,
+            "resultCount": 17224,
+            "actualPageSize": 1,
+            "groupingMode": "ungrouped",
+            "actualYear": request.year,
+            "actualProvince": request.province,
+            "actualTimeliness": request.timeliness,
+            "rows": [{"policyId": "policy-20"}],
+            "url": "https://example.test/search?page=21",
+        }
+        extended = {
+            **stale,
+            "totalPages": 173,
+            "rows": [{"policyId": "policy-21"}],
+        }
+        with (
+            patch.object(self.adapter, "_ensure_operation_ready"),
+            patch.object(
+                self.adapter,
+                "_read_results",
+                side_effect=[stale, extended, extended],
+            ),
+            patch("pkulaw_engine.sources.pkulaw.time.sleep"),
+        ):
+            self.tab.run_js.side_effect = [
+                {"ok": False, "reason": "next page unavailable"},
+                {"ok": True},
+            ]
+
+            result = self.adapter.next_page(21)
+
+        self.assertEqual(result["page"], 21)
+        self.assertEqual(result["rows"], [{"policyId": "policy-21"}])
+        self.assertEqual(self.adapter.current_search_session.page, 21)
+        scripts = [str(call.args[0]) for call in self.tab.run_js.call_args_list]
+        self.assertEqual(
+            sum("right_form.requestSubmit()" in script for script in scripts),
+            1,
+        )
+
     def test_batch_selection_and_verification(self) -> None:
         batch = [
             {
@@ -301,6 +360,92 @@ class PkulawAdapterOperationTests(unittest.TestCase):
             ):
                 with self.assertRaises(PageStructureChanged):
                     self.adapter.verify_batch_selection(batch)
+
+    def test_batch_verification_accepts_expected_subset_of_full_page(
+        self,
+    ) -> None:
+        batch = [
+            {
+                "number": number,
+                "policyId": f"p{number}",
+                "title": f"政策{number}",
+            }
+            for number in range(1, 51)
+        ]
+        matches = [
+            {
+                "number": number,
+                "id": f"p{number}",
+                "title": f"政策{number}",
+                "checked": number <= 50,
+            }
+            for number in range(1, 101)
+        ]
+        checked = [f"p{number}" for number in range(1, 51)]
+        with (
+            patch.object(self.adapter, "_ensure_operation_ready"),
+            patch.object(
+                self.adapter,
+                "_read_access_state",
+                return_value={},
+            ),
+            patch.object(self.adapter, "_raise_for_access"),
+            patch.object(
+                self.adapter,
+                "_read_results",
+                return_value={"page": 1},
+            ),
+        ):
+            self.tab.run_js.return_value = {
+                "ok": False,
+                "matches": matches,
+                "checked": checked,
+                "expectedCount": 50,
+                "actualCount": 100,
+                "page": 1,
+            }
+
+            result = self.adapter.verify_batch_selection(batch)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["expectedCount"], 50)
+        self.assertEqual(result["actualCount"], 100)
+
+    def test_batch_selection_reapplies_after_delayed_checkbox_revert(
+        self,
+    ) -> None:
+        batch = [
+            {
+                "number": 1,
+                "policyId": "p1",
+                "title": "政策一",
+            }
+        ]
+        with (
+            patch.object(self.adapter, "_ensure_operation_ready"),
+            patch.object(
+                self.adapter,
+                "_read_access_state",
+                return_value={},
+            ),
+            patch.object(self.adapter, "_raise_for_access"),
+            patch("pkulaw_engine.sources.pkulaw.time.sleep"),
+        ):
+            self.tab.run_js.side_effect = [
+                {"ok": True, "actual": ["p1"]},
+                {"ok": False, "actual": ["p2"]},
+                {"ok": True, "actual": ["p1"]},
+                *[
+                    {"ok": True, "actual": ["p1"]}
+                    for _ in range(12)
+                ],
+            ]
+
+            result = self.adapter.select_batch(batch)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["actual"], ["p1"])
+        self.assertEqual(result["stableSamples"], 12)
 
     def test_download_batch_file_success_and_failures(self) -> None:
         with self.assertRaisesRegex(Exception, "kind"):
@@ -433,7 +578,11 @@ class PkulawAdapterOperationTests(unittest.TestCase):
             ),
             patch("pkulaw_engine.sources.pkulaw.time.sleep"),
         ):
-            self.tab.run_js.return_value = True
+            self.tab.run_js.side_effect = lambda script: (
+                False
+                if "服务器无法处理您的请求" in str(script)
+                else True
+            )
             self.assertEqual(
                 self.adapter.open_detail(
                     {"url": "https://www.pkulaw.com/chl/p1.html"}
@@ -453,6 +602,7 @@ class PkulawAdapterOperationTests(unittest.TestCase):
             ),
             patch.object(self.adapter, "_raise_for_access"),
         ):
+            self.tab.run_js.side_effect = None
             self.tab.run_js.return_value = {
                 "title": "详情",
                 "issuingAuthority": "机关",
@@ -527,6 +677,53 @@ class PkulawAdapterOperationTests(unittest.TestCase):
             getattr(context.exception, "code", ""),
             "BODY_INCOMPLETE",
         )
+
+    def test_word_download_accepts_json_string_result(self) -> None:
+        with (
+            patch.object(self.adapter, "_ensure_operation_ready"),
+            patch.object(
+                self.adapter,
+                "_read_access_state",
+                return_value={},
+            ),
+            patch.object(self.adapter, "_raise_for_access"),
+        ):
+            self.tab.run_js.return_value = json.dumps(
+                {"ok": True, "method": "fullWord"}
+            )
+
+            result = self.adapter.click_word_download()
+
+        self.assertEqual(result, {"ok": True, "method": "fullWord"})
+        self.assertEqual(self.tab.run_js.call_count, 1)
+        self.assertIn("JSON.stringify", str(self.tab.run_js.call_args.args[0]))
+
+    def test_server_error_detail_page_fails_item_without_manual_wait(
+        self,
+    ) -> None:
+        with (
+            patch.object(
+                self.adapter,
+                "_read_access_state",
+                return_value={},
+            ),
+            patch.object(self.adapter, "_raise_for_access"),
+            patch(
+                "pkulaw_engine.sources.pkulaw.time.monotonic",
+                side_effect=[0, 0, 21],
+            ),
+            patch("pkulaw_engine.sources.pkulaw.time.sleep"),
+        ):
+            self.tab.run_js.side_effect = lambda script: (
+                "服务器无法处理您的请求" in str(script)
+            )
+
+            with self.assertRaises(DetailPageUnavailable) as context:
+                self.adapter.open_detail(
+                    {"url": "https://www.pkulaw.com/lar/missing.html"}
+                )
+
+        self.assertEqual(context.exception.code, "DETAIL_PAGE_UNAVAILABLE")
 
     def test_return_to_results_and_library_handoff(self) -> None:
         with self.assertRaises(PageStructureChanged):
@@ -754,6 +951,70 @@ class PkulawAdapterOperationTests(unittest.TestCase):
         script = self.tab.run_js.call_args.args[0]
         self.assertIn('select[name=\\"year\\"]', script)
         self.assertIn("values:[...new Set(values)]", script)
+
+    def test_available_filter_entries_keeps_labels_and_counts(self) -> None:
+        self.tab.run_js.return_value = {
+            "ok": True,
+            "values": [],
+            "entries": [
+                {
+                    "value": "北京市",
+                    "label": "北京市 (115)",
+                    "count": 115,
+                },
+                {
+                    "value": "天津市",
+                    "label": "天津市 (93)",
+                    "count": 93,
+                },
+            ],
+        }
+
+        entries = self.adapter.available_filter_entries("province")
+
+        self.assertEqual(
+            entries,
+            [
+                {
+                    "value": "北京市",
+                    "label": "北京市 (115)",
+                    "count": 115,
+                },
+                {
+                    "value": "天津市",
+                    "label": "天津市 (93)",
+                    "count": 93,
+                },
+            ],
+        )
+
+    def test_filter_entries_fallback_to_v6_tree_selectors(self) -> None:
+        self.adapter.selectors.pop("filters", None)
+        self.adapter.selectors.pop("yearFilter", None)
+        self.tab.run_js.return_value = {
+            "ok": True,
+            "values": ["2023"],
+            "entries": [
+                {
+                    "value": "2023",
+                    "label": "2023 (3983)",
+                    "count": 3983,
+                }
+            ],
+        }
+
+        entries = self.adapter.available_filter_entries("year")
+
+        self.assertEqual(entries[0]["count"], 3983)
+        script = self.tab.run_js.call_args.args[0]
+        self.assertIn('IssueDate', script)
+
+        entries = self.adapter.available_filter_entries("province")
+        self.assertEqual(entries[0]["count"], 3983)
+        script = self.tab.run_js.call_args.args[0]
+        self.assertIn('IssueDepartment', script)
+        self.assertIn(':has(', script)
+        self.assertNotIn('::has(', script)
 
     def test_filter_option_waits_for_delayed_tree_population(self) -> None:
         self.tab.run_js.side_effect = [

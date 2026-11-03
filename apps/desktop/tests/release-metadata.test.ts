@@ -37,4 +37,14 @@ describe("release metadata", () => {
     expect(verifier).toContain("sqliteSchemaVersion: 6");
     expect(verifier).not.toContain("sqliteSchemaVersion: 5");
   });
+
+  it("preserves real portable data after building an archive without it", () => {
+    const builder = read("scripts/build-portable.mjs");
+
+    expect(builder).toContain(".portable-data-preserve-current");
+    expect(builder).toContain("preservePortableData");
+    expect(builder).toContain(
+      "await fsp.rename(portableDataBackup, portableDataPath)"
+    );
+  });
 });

@@ -110,15 +110,22 @@ def submit_page_form(
               document.querySelector(selector);
             if (input) input.value = String(value);
           }};
-          setValue('input[name="OldPageIndex"]', {page_index});
+          const currentIndexControl =
+            form.querySelector('input[name="Pager.PageIndex"]') ||
+            document.querySelector('input[name="Pager.PageIndex"]');
+          const previousPageIndex = Math.max(
+            0,
+            Number(currentIndexControl?.value || 0)
+          );
+          setValue('input[name="OldPageIndex"]', previousPageIndex);
           setValue('input[name="Pager.PageIndex"]', {page_index});
           setValue('input[name="PageIndex"]', {page_index});
-          if (typeof form.submit !== "function") {{
+          if (typeof form.requestSubmit !== "function") {{
             return {{ok:false, reason:"right form submit missing"}};
           }}
           setTimeout(() => {{
             const right_form = form;
-            right_form.submit();
+            right_form.requestSubmit();
           }}, 100);
           return {{
             ok:true,
@@ -161,6 +168,11 @@ def transition_next_page(
     else:
         direct_beyond_reported = False
 
+    transition_probe = {
+        "sawTransition": False,
+        "lastState": None,
+    }
+
     def read_stable_state(timeout: float) -> tuple[dict[str, Any] | None, int]:
         deadline = clock() + max(0.0, timeout)
         stable = 0
@@ -175,6 +187,14 @@ def transition_next_page(
                     continue
                 raise
             identity = row_signature(state)
+            transition_probe["lastState"] = dict(state)
+            if (
+                int(state.get("page") or 0)
+                != int(before_state.get("page") or 0)
+                or identity != before_signature
+                or not search_context_matches(before_state, state)
+            ):
+                transition_probe["sawTransition"] = True
             if int(state.get("page") or 0) != int(expected_page):
                 stable = 0
                 last_signature = identity
@@ -202,6 +222,20 @@ def transition_next_page(
         else (None, 0)
     )
     used_form_fallback = not bool(clicked.get("ok"))
+    if (
+        state is None
+        and clicked.get("ok")
+        and bool(transition_probe["sawTransition"])
+    ):
+        # A live transition can take longer than the click-poll window. Give
+        # the already-started navigation time to settle before raising.
+        state, stable = read_stable_state(settle_timeout_seconds)
+        if state is None:
+            raise PageNavigationError(
+                f"未能核验第 {expected_page} 页；点击已触发页面变化，"
+                "但页码、结果或签名未稳定",
+                code="PAGE_TRANSITION_UNCONFIRMED",
+            )
     if state is None:
         submitted = submit_page_form(
             tab,

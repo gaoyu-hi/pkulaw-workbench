@@ -440,6 +440,15 @@ def _extract_legacy_doc(
     path: Path,
     runtime_root: Path | None,
 ) -> tuple[str, DocumentExtractionResult]:
+    if len(str(path)) >= 240:
+        with tempfile.TemporaryDirectory(prefix="pkd-") as directory:
+            short_path = Path(directory) / "input.doc"
+            shutil.copy2(path, short_path)
+            try:
+                return _extract_legacy_doc(short_path, runtime_root)
+            except DocumentExtractionError as exc:
+                exc.details.setdefault("sourceFile", str(path))
+                raise
     binary, _home = _bundled_antiword_paths(runtime_root)
     errors: list[dict[str, object]] = []
     try:
