@@ -303,6 +303,32 @@ const POLICIES: FixturePolicy[] = [
     body: "用于验证地方法规、省份筛选和地方政策下载的本地测试正文。"
   },
   {
+    id: "bj-disability-sports-2012",
+    title: "北京市残疾人体育工作办法",
+    library: "lar",
+    province: "北京市",
+    validity: "现行有效",
+    issuingAuthority: "北京市人民政府",
+    documentNumber: "京政发〔2012〕18号",
+    publicationDate: "2012-06-01",
+    effectiveDate: "2012-07-01",
+    effectLevel: "地方政府规章",
+    body: "北京市残疾人体育工作办法 2012 年测试正文。"
+  },
+  {
+    id: "bj-disability-sports-2013",
+    title: "北京市残疾人体育工作实施细则",
+    library: "lar",
+    province: "北京市",
+    validity: "现行有效",
+    issuingAuthority: "北京市人民政府办公厅",
+    documentNumber: "京政办发〔2013〕9号",
+    publicationDate: "2013-05-01",
+    effectiveDate: "2013-06-01",
+    effectLevel: "地方规范性文件",
+    body: "北京市残疾人体育工作实施细则 2013 年测试正文。"
+  },
+  {
     id: "retry-stage3-001",
     title: "失败重试政策",
     library: "chl",
@@ -550,6 +576,20 @@ function resultsPageHtml(params: URLSearchParams, baseUrl: string): string {
   const prevParams = new URLSearchParams(params);
   prevParams.set("page", String(Math.max(1, safePage - 1)));
   const pagination = `页数 ${safePage} / ${totalPages}`;
+  const yearOptions = [
+    "全部年份",
+    "2025",
+    "2024",
+    "2023",
+    "2022",
+    "2021",
+    "2020",
+    "2019",
+    "2018",
+    ...(keyword === "残疾人体育" && library === "lar"
+      ? ["2013", "2012"]
+      : [])
+  ];
   return `<!doctype html>
 <html lang="zh-CN" data-auth-ready="true" data-pkulaw-profile="fixture">
 <head>
@@ -610,7 +650,7 @@ function resultsPageHtml(params: URLSearchParams, baseUrl: string): string {
     <h1>“${escapeHtml(keyword)}”的检索结果</h1>
     <div class="toolbar">
       ${omitYear ? "" : `<select name="year">
-        ${["全部年份","2025","2024","2023","2022","2021","2020","2019","2018"].map(value => `<option ${params.get("year") === value ? "selected" : ""}>${value}</option>`).join("")}
+        ${yearOptions.map(value => `<option ${params.get("year") === value ? "selected" : ""}>${value}</option>`).join("")}
       </select>`}
       <select name="province">
         ${["全部省份","内蒙古自治区","北京市"].map(value => `<option ${params.get("province") === value ? "selected" : ""}>${value}</option>`).join("")}

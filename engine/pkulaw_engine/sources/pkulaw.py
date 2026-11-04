@@ -2196,6 +2196,16 @@ class PkulawAdapter:
                         actual:'',
                         reason:'filter root missing'
                       }};
+                      const select = root.matches?.('select')
+                        ? root
+                        : root.querySelector?.('select');
+                      if (select) {{
+                        const actual = label(
+                          select.selectedOptions?.[0]?.textContent ||
+                          select.value
+                        );
+                        return {{ok:actual === expected, expected, actual}};
+                      }}
                       const items = [...root.querySelectorAll({
                         json.dumps(item_selector)
                       })];

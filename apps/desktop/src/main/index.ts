@@ -1083,6 +1083,36 @@ async function runUnifiedWorkspaceSmoke(
       `年份起点自动归一化不通过：${JSON.stringify(yearWindowPreview)}`
     );
   }
+  const yearSwitchPreview = (await window.webContents.executeJavaScript(
+    `window.pkulaw.previewTask('single', {
+      queries: ['残疾人体育'],
+      matchMode: 'keyword',
+      library: 'local',
+      yearSelection: {
+        mode: 'range',
+        startYear: 2012,
+        endYear: 2013
+      },
+      province: '北京市',
+      timeliness: '全部（仅记录元数据，不筛选）',
+      pageSize: 10
+    })`
+  )) as TaskPreviewSummary;
+  if (
+    yearSwitchPreview.combinations
+      .map((combination) => combination.year)
+      .join(",") !== "2012,2013" ||
+    yearSwitchPreview.totalResults !== 2 ||
+    yearSwitchPreview.downloadsStarted !== 0 ||
+    yearSwitchPreview.downloadIntentsCreated !== 0 ||
+    yearSwitchPreview.tasksCreated !== 0
+  ) {
+    throw new Error(
+      `2012→2013 年份切换零下载预览不通过：${JSON.stringify(
+        yearSwitchPreview
+      )}`
+    );
+  }
   await service.request("task.create", {
     name: "阶段十一批量工作区验证",
     mode: "batch",
@@ -1199,6 +1229,10 @@ async function runUnifiedWorkspaceSmoke(
         .find(item => (item.textContent || '').trim() === '应用设置');
       const yearRow = document.querySelector('.task-settings-panel .collector-year-row')
         ?.getBoundingClientRect();
+      const librarySelect = [...document.querySelectorAll('.task-settings-panel select')]
+        .find(select =>
+          [...select.options].some(option => option.textContent === '地方法规')
+        );
       const provinceRow = document.querySelector('.task-settings-panel .collector-province-row')
         ?.getBoundingClientRect();
       const footerRect = footer?.getBoundingClientRect();
@@ -1214,7 +1248,8 @@ async function runUnifiedWorkspaceSmoke(
         applyTop: applyRect?.top || 0,
         applyBottom: applyRect?.bottom || 0,
         yearTop: yearRow?.top || 0,
-        provinceTop: provinceRow?.top || 0,
+        library: librarySelect?.value || '',
+        provinceRowPresent: Boolean(provinceRow),
         bodyBeforeFooter: Boolean(
           body && footer &&
           (body.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING)
@@ -1234,13 +1269,66 @@ async function runUnifiedWorkspaceSmoke(
     Number(settingsLayout.applyTop) < 0 ||
     Number(settingsLayout.applyBottom) >
       Number(settingsLayout.innerHeight) + 1 ||
-    Number(settingsLayout.provinceTop) <= Number(settingsLayout.yearTop) ||
+    (
+      settingsLayout.library === "central"
+        ? settingsLayout.provinceRowPresent !== false
+        : settingsLayout.provinceRowPresent !== true
+    ) ||
     settingsLayout.bodyBeforeFooter !== true
   ) {
     throw new Error(
       `阶段 I 固定表单操作栏不通过：${JSON.stringify(settingsLayout)}`
     );
   }
+  const provinceVisibilitySwitch = (await window.webContents.executeJavaScript(
+    `(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const library = [...document.querySelectorAll('.task-settings-panel select')]
+        .find(select =>
+          [...select.options].some(option => option.textContent === '地方法规')
+        );
+      if (!library) return {
+        localVisible: false,
+        centralHidden: false,
+        restored: false
+      };
+      const original = library.value;
+      const update = (value) => {
+        library.value = value;
+        library.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      update('local');
+      await wait(120);
+      const localVisible = Boolean(
+        document.querySelector('.task-settings-panel .collector-province-row')
+      );
+      update('central');
+      await wait(120);
+      const centralHidden = !document.querySelector(
+        '.task-settings-panel .collector-province-row'
+      );
+      update(original);
+      await wait(120);
+      const restored =
+        library.value === original &&
+        Boolean(
+          document.querySelector('.task-settings-panel .collector-province-row')
+        ) === (original !== 'central');
+      return { localVisible, centralHidden, restored };
+    })()`
+  )) as Record<string, unknown>;
+  if (
+    provinceVisibilitySwitch.localVisible !== true ||
+    provinceVisibilitySwitch.centralHidden !== true ||
+    provinceVisibilitySwitch.restored !== true
+  ) {
+    throw new Error(
+      `任务设置中的省份显隐未随法规库切换：${JSON.stringify(
+        provinceVisibilitySwitch
+      )}`
+    );
+  }
+  const localProvinceVisible = provinceVisibilitySwitch.localVisible === true;
   await captureApplicationWindow(
     window,
     path.join(dataDirectory, "stageI-single-settings.png")
@@ -1587,6 +1675,143 @@ async function runUnifiedWorkspaceSmoke(
 
   await browserHost.selectInstitution(fixtureProfile.id);
   await wait(500);
+  const stopSummaryInput = {
+    name: `阶段十一停止摘要验证 ${Date.now()}`,
+    mode: "single",
+    outputDir: path.join(dataDirectory, "phase11-stop-summary"),
+    input: {
+      queries: ["残疾人体育"],
+      matchMode: "keyword",
+      library: "local",
+      yearSelection: { mode: "single", year: 2011 },
+      province: "北京市",
+      timeliness: "全部（仅记录元数据，不筛选）",
+      pageSize: 10,
+      pageSelection: { mode: "limit", maxPages: 1 },
+      outputDir: path.join(dataDirectory, "phase11-stop-summary")
+    },
+    operationId: `phase11-stop-summary-${Date.now()}`
+  };
+  const stopSummaryStart = await window.webContents.executeJavaScript(
+    `window.pkulaw.startCollectorTask(${JSON.stringify(stopSummaryInput)})`
+  ) as CollectorStartResult;
+  if (
+    stopSummaryStart.started !== false ||
+    !stopSummaryStart.task?.id ||
+    !stopSummaryStart.error
+  ) {
+    throw new Error(
+      `停止摘要任务未按预期在预检阶段停止：${JSON.stringify(
+        stopSummaryStart
+      )}`
+    );
+  }
+  await navigate("总览");
+  await wait(250);
+  await navigate("逐篇采集");
+  await waitForSelector(".task-workspace-frame");
+  const stopTaskDeadline = Date.now() + 8_000;
+  let stopTaskSelected = "";
+  while (Date.now() < stopTaskDeadline) {
+    stopTaskSelected = String(
+      await window.webContents.executeJavaScript(
+        `document.querySelector('.single-run-heading h2')?.textContent || ''`
+      )
+    );
+    if (stopTaskSelected === stopSummaryInput.name) break;
+    await wait(200);
+  }
+  if (stopTaskSelected !== stopSummaryInput.name) {
+    throw new Error(`停止摘要任务未在逐篇工作区选中：${stopTaskSelected}`);
+  }
+  const stopSummaryUi = (await window.webContents.executeJavaScript(
+    `(() => {
+      const summary = document.querySelector('[data-testid="task-failure-summary"]');
+      const button = summary?.querySelector('button');
+      const scroll = document.querySelector('.task-runtime-scroll');
+      const buttonRect = button?.getBoundingClientRect();
+      return {
+        present: Boolean(summary),
+        buttonText: (button?.textContent || '').trim(),
+        buttonInside:
+          Boolean(buttonRect) &&
+          buttonRect.left >= -1 &&
+          buttonRect.right <= window.innerWidth + 1 &&
+          buttonRect.top >= -1 &&
+          buttonRect.bottom <= window.innerHeight + 1,
+        summaryText: summary?.textContent || '',
+        runtimeScrollPresent: Boolean(scroll),
+        pageScrollHeight: document.documentElement.scrollHeight,
+        innerHeight: window.innerHeight
+      };
+    })()`
+  )) as Record<string, unknown>;
+  if (
+    stopSummaryUi.present !== true ||
+    stopSummaryUi.buttonText !== "查看停止原因" ||
+    stopSummaryUi.buttonInside !== true ||
+    String(stopSummaryUi.summaryText).includes("{'ok': False") ||
+    stopSummaryUi.runtimeScrollPresent !== true ||
+    Number(stopSummaryUi.pageScrollHeight) >
+      Number(stopSummaryUi.innerHeight) + 1
+  ) {
+    throw new Error(
+      `停止摘要首屏不通过：${JSON.stringify(stopSummaryUi)}`
+    );
+  }
+  const stopDetailButtonClicked = Boolean(
+    await window.webContents.executeJavaScript(
+      `(() => {
+        const button = document.querySelector('[data-testid="task-failure-summary"] button');
+        if (!button) return false;
+        button.click();
+        return true;
+      })()`
+    )
+  );
+  if (
+    !stopDetailButtonClicked ||
+    !(await waitForSelector(".task-pause-detail-dialog", 5_000))
+  ) {
+    throw new Error("单击查看停止原因未打开详情");
+  }
+  const browserHiddenByStopDetail = await window.webContents.executeJavaScript(
+    `document.querySelector('.browser-surface.task')?.getAttribute('data-browser-visible')`
+  );
+  const stopDiagnosticsScreenshotPath = path.join(
+    dataDirectory,
+    "phase11-stop-diagnostics.png"
+  );
+  await captureApplicationWindow(window, stopDiagnosticsScreenshotPath);
+  const stopDetailClosed = Boolean(
+    await window.webContents.executeJavaScript(
+      `(() => {
+        const button = [...document.querySelectorAll('.task-pause-detail-dialog button')]
+          .find(item => (item.textContent || '').trim() === '关闭详情');
+        if (!button) return false;
+        button.click();
+        return true;
+      })()`
+    )
+  );
+  await wait(350);
+  const browserRestoredAfterStopDetail =
+    await window.webContents.executeJavaScript(
+      `document.querySelector('.browser-surface.task')?.getAttribute('data-browser-visible')`
+    );
+  if (
+    browserHiddenByStopDetail !== "false" ||
+    !stopDetailClosed ||
+    browserRestoredAfterStopDetail !== "true"
+  ) {
+    throw new Error(
+      `停止详情未正确隐藏/恢复浏览器：${JSON.stringify({
+        browserHiddenByStopDetail,
+        stopDetailClosed,
+        browserRestoredAfterStopDetail
+      })}`
+    );
+  }
   setLogicalContentSize(window, 1536, 864);
   const screenshotPath = path.join(
     dataDirectory,
@@ -1610,6 +1835,13 @@ async function runUnifiedWorkspaceSmoke(
     recoveryActionButtonCount,
     recoverySettleMs,
     recoveryEvents,
+    yearSwitchPreview,
+    localProvinceVisible,
+    stopSummaryTaskId: stopSummaryStart.task.id,
+    stopSummaryUi,
+    stopDiagnosticsScreenshotPath,
+    browserHiddenByStopDetail,
+    browserRestoredAfterStopDetail,
     screenshotPath
   };
 }
