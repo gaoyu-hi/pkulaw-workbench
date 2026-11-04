@@ -22,9 +22,16 @@ class SearchSessionError(RuntimeError):
 class SearchTransitionTimeout(RuntimeError):
     code = "SEARCH_TRANSITION_UNCONFIRMED"
 
-    def __init__(self, message: str, *, code: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code or "SEARCH_TRANSITION_UNCONFIRMED"
+        self.details = dict(details or {})
 
 
 def _normalized_text(value: Any) -> str:
@@ -350,6 +357,7 @@ class SearchTransaction:
         self.require_ungrouped = bool(require_ungrouped)
         self.last_rejection = ""
         self.last_rejection_code = ""
+        self.last_rejection_details: dict[str, Any] = {}
         self.last_observation: dict[str, Any] = {}
         self.last_session: SearchSession | None = None
         self.session: SearchSession | None = None
@@ -411,9 +419,11 @@ class SearchTransaction:
         raise SearchTransitionTimeout(
             f"无法确认新检索已经替换旧结果：{detail}",
             code=self.last_rejection_code or "SEARCH_TRANSITION_UNCONFIRMED",
+            details=dict(self.last_rejection_details),
         )
 
     def _rejection_reason(self, observation: dict[str, Any]) -> str:
+        self.last_rejection_details = {}
         if bool(observation.get("loading")):
             return "页面仍处于加载状态"
         if bool(self.previous.get("markerApplied")) and bool(
@@ -485,6 +495,11 @@ class SearchTransaction:
         for key in self.required_filter_keys:
             expected, actual = filter_values[key]
             if not filter_values_match(expected, actual):
+                self.last_rejection_details = {
+                    "filterKey": key,
+                    "expected": str(expected or ""),
+                    "actual": str(actual or ""),
+                }
                 return (
                     f"{key} 筛选未应用：{actual or '<missing>'} != {expected}"
                 )

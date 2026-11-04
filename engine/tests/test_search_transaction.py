@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from pkulaw_engine.sources.search_transaction import (
     SearchRequestIdentity,
@@ -382,6 +383,30 @@ class SearchTransactionTests(unittest.TestCase):
         )
         self.assertIsNone(transaction.observe(valid))
         self.assertIsNotNone(transaction.observe(valid))
+
+    def test_filter_mismatch_records_structured_details(self) -> None:
+        request = replace(self.request, year="2013")
+        transaction = SearchTransaction(
+            request,
+            token="year-details",
+            previous={"markerApplied": False},
+            required_filter_keys=("year",),
+        )
+
+        self.assertIsNone(
+            transaction.observe(
+                self._observation(actualYear="全部年份")
+            )
+        )
+
+        self.assertEqual(
+            transaction.last_rejection_details,
+            {
+                "filterKey": "year",
+                "expected": "2013",
+                "actual": "全部年份",
+            },
+        )
 
     def test_page_size_and_group_fail_with_specific_codes(self) -> None:
         page_size_transaction = SearchTransaction(

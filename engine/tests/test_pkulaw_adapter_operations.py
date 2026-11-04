@@ -938,6 +938,72 @@ class PkulawAdapterOperationTests(unittest.TestCase):
             self.adapter.ensure_ungrouped_results()["ok"]
         )
 
+    def test_year_tree_confirms_inner_node_selection(self) -> None:
+        with (
+            patch.object(
+                self.adapter,
+                "_wait_for_filter_option",
+                return_value={"ok": True, "changed": False},
+            ),
+            patch.object(
+                self.adapter,
+                "_wait_for_filter_selection",
+                return_value={
+                    "ok": True,
+                    "expected": "2013",
+                    "actual": "2013",
+                },
+            ),
+        ):
+            self.tab.run_js.return_value = {
+                "ok": True,
+                "changed": True,
+                "previous": "全部年份",
+                "actual": "2013",
+            }
+            result = self.adapter._apply_filter_action("year", "2013")
+
+        self.assertTrue(result["ok"])
+        script = self.tab.run_js.call_args.args[0]
+        self.assertIn(".node_name", script)
+        self.assertIn("pointerdown", script)
+        self.assertIn("mouseup", script)
+        self.assertEqual(result["actual"], "2013")
+
+    def test_unconfirmed_year_selection_fails_with_structured_details(self) -> None:
+        with (
+            patch.object(
+                self.adapter,
+                "_wait_for_filter_option",
+                return_value={"ok": True, "changed": False},
+            ),
+            patch.object(
+                self.adapter,
+                "_wait_for_filter_selection",
+                return_value={
+                    "ok": False,
+                    "expected": "2013",
+                    "actual": "全部年份",
+                },
+            ),
+        ):
+            self.tab.run_js.return_value = {
+                "ok": True,
+                "changed": True,
+                "previous": "全部年份",
+            }
+            with self.assertRaises(YearFilterUnavailable) as context:
+                self.adapter._apply_filter_action("year", "2013")
+
+        self.assertEqual(
+            context.exception.details,
+            {
+                "filterKey": "year",
+                "expected": "2013",
+                "actual": "全部年份",
+            },
+        )
+
     def test_available_filter_values_reads_real_year_tree_once(self) -> None:
         self.tab.run_js.return_value = {
             "ok": True,
@@ -1495,6 +1561,53 @@ class PkulawAdapterOperationTests(unittest.TestCase):
                             action=lambda: {"ok": True, "changed": True},
                             required_filter_keys=(),
                         )
+
+    def test_run_refinement_preserves_year_transition_details(self) -> None:
+        request = self._request(year="2013")
+        session = self._session(request)
+        error = SearchTransitionUnconfirmed(
+            "year 筛选未应用",
+            details={
+                "filterKey": "year",
+                "expected": "2013",
+                "actual": "全部年份",
+            },
+        )
+        error.code = "YEAR_FILTER_UNAVAILABLE"
+
+        with (
+            patch.object(
+                self.adapter,
+                "_mark_search_transition",
+                return_value={"markerApplied": True},
+            ),
+            patch.object(
+                self.adapter,
+                "_clear_search_transition_marker",
+            ),
+            patch.object(
+                self.adapter,
+                "_wait_for_search_transaction",
+                side_effect=error,
+            ),
+        ):
+            with self.assertRaises(YearFilterUnavailable) as context:
+                self.adapter._run_refinement(
+                    request=request,
+                    session=session,
+                    state={"page": 1, "rows": []},
+                    action=lambda: {"ok": True, "changed": True},
+                    required_filter_keys=("year",),
+                )
+
+        self.assertEqual(
+            context.exception.details,
+            {
+                "filterKey": "year",
+                "expected": "2013",
+                "actual": "全部年份",
+            },
+        )
 
     def test_run_refinement_rejects_unsuccessful_action(self) -> None:
         request = self._request()

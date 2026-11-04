@@ -61,6 +61,15 @@ V6_FILTER_TREE_SELECTORS: dict[str, str] = {
 class SourceAccessError(RuntimeError):
     code = "SOURCE_ACCESS_ERROR"
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.details = dict(details or {})
+
 
 class LoginRequired(SourceAccessError):
     code = "LOGIN_REQUIRED"
@@ -1742,7 +1751,10 @@ class PkulawAdapter:
         except SearchTransitionTimeout as exc:
             if exc.code == "SEARCH_LIBRARY_MISMATCH":
                 raise SearchLibraryMismatch(str(exc)) from exc
-            error = SearchTransitionUnconfirmed(str(exc))
+            error = SearchTransitionUnconfirmed(
+                str(exc),
+                details=dict(getattr(exc, "details", {}) or {}),
+            )
             error.code = exc.code
             raise error from exc
 
@@ -1788,10 +1800,20 @@ class PkulawAdapter:
                 if not filter_values_match(value, actual):
                     if key == "year" and clean_filter_label(actual) == "":
                         raise YearFilterUnavailable(
-                            f"当前页面没有可用的公布年份筛选：{value}"
+                            f"当前页面没有可用的公布年份筛选：{value}",
+                            details={
+                                "filterKey": key,
+                                "expected": value,
+                                "actual": str(actual or ""),
+                            },
                         )
                     raise FilterNotApplied(
-                        f"{key} 筛选未生效：{actual or '<missing>'} != {value}"
+                        f"{key} 筛选未生效：{actual or '<missing>'} != {value}",
+                        details={
+                            "filterKey": key,
+                            "expected": value,
+                            "actual": str(actual or ""),
+                        },
                     )
 
         session, state, group_action = self._run_refinement(
@@ -1841,10 +1863,20 @@ class PkulawAdapter:
             if not filter_values_match(requested, actual):
                 if key == "year":
                     raise YearFilterUnavailable(
-                        f"公布年份筛选未生效：{actual or '<missing>'} != {requested}"
+                        f"公布年份筛选未生效：{actual or '<missing>'} != {requested}",
+                        details={
+                            "filterKey": key,
+                            "expected": str(requested or ""),
+                            "actual": str(actual or ""),
+                        },
                     )
                 raise FilterNotApplied(
-                    f"{key} 筛选未生效：{actual or '<missing>'} != {requested}"
+                    f"{key} 筛选未生效：{actual or '<missing>'} != {requested}",
+                    details={
+                        "filterKey": key,
+                        "expected": str(requested or ""),
+                        "actual": str(actual or ""),
+                    },
                 )
         if session.actual_page_size != request.requested_page_size:
             raise PageSizeNotApplied(
@@ -1905,13 +1937,25 @@ class PkulawAdapter:
             if code == "YEAR_FILTER_UNAVAILABLE" or (
                 "year 筛选未应用" in str(exc)
             ):
-                raise YearFilterUnavailable(str(exc)) from exc
+                raise YearFilterUnavailable(
+                    str(exc),
+                    details=dict(getattr(exc, "details", {}) or {}),
+                ) from exc
             if code == "PAGE_SIZE_NOT_APPLIED":
-                raise PageSizeNotApplied(str(exc)) from exc
+                raise PageSizeNotApplied(
+                    str(exc),
+                    details=dict(getattr(exc, "details", {}) or {}),
+                ) from exc
             if code == "RESULT_GROUPING_UNAVAILABLE":
-                raise ResultGroupingUnavailable(str(exc)) from exc
+                raise ResultGroupingUnavailable(
+                    str(exc),
+                    details=dict(getattr(exc, "details", {}) or {}),
+                ) from exc
             if code == "FILTER_NOT_APPLIED":
-                raise FilterNotApplied(str(exc)) from exc
+                raise FilterNotApplied(
+                    str(exc),
+                    details=dict(getattr(exc, "details", {}) or {}),
+                ) from exc
             raise
         state = self._attach_search_session(
             dict(transaction.last_observation),
@@ -1960,7 +2004,17 @@ class PkulawAdapter:
             if key == "year":
                 raise YearFilterUnavailable(
                     f"当前页面没有可用的公布年份筛选：{value}；"
-                    f"{availability!r}"
+                    f"{availability!r}",
+                    details={
+                        "filterKey": key,
+                        "expected": value,
+                        "available": list(
+                            availability.get("available") or []
+                        ),
+                        "reason": str(
+                            availability.get("reason") or ""
+                        ),
+                    },
                 )
             return availability
         with self.bridge.transaction() as tab:
@@ -2030,6 +2084,11 @@ class PkulawAdapter:
                     ))
                   }};
                   const nested = item.closest('li') || item;
+                  const clickTarget = (
+                    item.matches?.('.node_name')
+                      ? item
+                      : item.querySelector?.('.node_name')
+                  ) || item;
                   const current = !!(
                     item.classList.contains('current') ||
                     item.classList.contains('selected') ||
@@ -2040,16 +2099,138 @@ class PkulawAdapter:
                     nested.classList.contains('selected') ||
                     nested.classList.contains('active')
                   );
-                  if (!current) item.click();
-                  return {{ok:true, changed:!current, actual:expected}};
+                  if (!current) {{
+                    for (const type of [
+                      'pointerdown',
+                      'mousedown',
+                      'pointerup',
+                      'mouseup'
+                    ]) {{
+                      const EventCtor = (
+                        type.startsWith('pointer') && window.PointerEvent
+                          ? window.PointerEvent
+                          : window.MouseEvent
+                      );
+                      clickTarget.dispatchEvent(new EventCtor(type, {{
+                        bubbles:true,
+                        cancelable:true,
+                        view:window,
+                        button:0
+                      }}));
+                    }}
+                    clickTarget.click();
+                  }}
+                  return {{
+                    ok:true,
+                    changed:!current,
+                    previous:current ? expected : 'not-selected',
+                    actual:expected
+                  }};
                 }})()
                 """
             ) or {}
         if not result.get("ok") and key == "year":
             raise YearFilterUnavailable(
-                f"当前页面没有可用的公布年份筛选：{value}；{result!r}"
+                f"当前页面没有可用的公布年份筛选：{value}；{result!r}",
+                details={
+                    "filterKey": key,
+                    "expected": value,
+                    "available": list(result.get("available") or []),
+                    "reason": str(result.get("reason") or ""),
+                },
+            )
+        if key == "year" and result.get("changed"):
+            selection = self._wait_for_filter_selection(
+                key=key,
+                value=value,
+                root_selector=root_selector,
+            )
+            if not selection.get("ok"):
+                actual = str(selection.get("actual") or "")
+                raise YearFilterUnavailable(
+                    f"公布年份选择未确认：{actual or '<missing>'} != {value}",
+                    details={
+                        "filterKey": key,
+                        "expected": value,
+                        "actual": actual,
+                    },
+                )
+            result.update(
+                {
+                    "actual": str(selection.get("actual") or value),
+                }
             )
         return result
+
+    def _wait_for_filter_selection(
+        self,
+        *,
+        key: str,
+        value: str,
+        root_selector: str,
+        timeout_seconds: float = 8.0,
+    ) -> dict[str, Any]:
+        item_selector = str(self.selectors.get("filterItem") or "a")
+        deadline = time.monotonic() + timeout_seconds
+        last: dict[str, Any] = {}
+        while time.monotonic() < deadline:
+            with self.bridge.transaction() as tab:
+                last = tab.run_js(
+                    f"""
+                    return (() => {{
+                      const clean = value => (value || '')
+                        .replace(/\\s+/g, ' ').trim();
+                      const label = value => clean(value)
+                        .replace(/\\s*\\(\\s*\\d+\\s*\\)\\s*$/, '')
+                        .replace(/\\s+\\d+\\s*$/, '')
+                        .trim();
+                      const expected = label({
+                        json.dumps(value, ensure_ascii=False)
+                      });
+                      const root = document.querySelector({
+                        json.dumps(root_selector)
+                      });
+                      if (!root) return {{
+                        ok:false,
+                        expected,
+                        actual:'',
+                        reason:'filter root missing'
+                      }};
+                      const items = [...root.querySelectorAll({
+                        json.dumps(item_selector)
+                      })];
+                      const selected = items.find(candidate => {{
+                        const nested = candidate.closest('li') || candidate;
+                        return (
+                          candidate.classList.contains('current') ||
+                          candidate.classList.contains('selected') ||
+                          candidate.classList.contains('active') ||
+                          candidate.getAttribute('aria-selected') === 'true' ||
+                          candidate.dataset.selected === 'true' ||
+                          nested.classList.contains('current') ||
+                          nested.classList.contains('selected') ||
+                          nested.classList.contains('active')
+                        );
+                      }});
+                      const actual = selected ? label(
+                        selected.getAttribute('title') ||
+                        selected.querySelector?.('.node_name')?.textContent ||
+                        selected.textContent
+                      ) : '全部年份';
+                      return {{ok:actual === expected, expected, actual}};
+                    }})()
+                    """
+                ) or {}
+            if last.get("ok"):
+                return last
+            if last.get("actual") not in {"", "全部年份"}:
+                return last
+            time.sleep(0.25)
+        return last or {
+            "ok": False,
+            "expected": value,
+            "actual": "全部年份",
+        }
 
     def _wait_for_filter_option(
         self,
