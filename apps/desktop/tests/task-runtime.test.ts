@@ -310,7 +310,7 @@ describe("task runtime components", () => {
     expect(html).toContain("不是 100% 成功");
   });
 
-  it("renders search identity, workflow, pause and intent together", () => {
+  it("renders search identity, workflow, failure and intent together", () => {
     const html = renderToStaticMarkup(
       React.createElement(TaskRuntimePanel, {
         task: baseTask,
@@ -321,8 +321,42 @@ describe("task runtime components", () => {
     expect(html).toContain("当前检索身份");
     expect(html).toContain("当前下载意图：批量目录");
     expect(html).toContain("workflow-stage-strip");
-    expect(html).toContain("自动暂停");
-    expect(html).toContain("查看完整原因");
+    expect(html).toContain('data-testid="task-failure-summary"');
+    expect(html).toContain("查看停止原因");
+  });
+
+  it("keeps one stopped reason and detail action outside the scroll area", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(TaskRuntimePanel, {
+        task: {
+          ...baseTask,
+          status: "stopped",
+          currentStage: "FILTER_NOT_APPLIED",
+          error: {
+            code: "YEAR_FILTER_UNAVAILABLE",
+            message: "无法确认新检索已经替换旧结果",
+            details: {
+              filterKey: "year",
+              expected: "2013",
+              actual: "全部年份"
+            }
+          }
+        }
+      })
+    );
+    const summaryIndex = html.indexOf("task-failure-summary");
+    const scrollIndex = html.indexOf("task-runtime-scroll");
+    const searchIndex = html.indexOf("task-search-context");
+
+    expect(html.match(/data-testid="task-failure-summary"/g)).toHaveLength(1);
+    expect(html).toContain("未能切换到 2013 年");
+    expect(html).toContain("查看停止原因");
+    expect(html.match(/查看停止原因/g)).toHaveLength(1);
+    expect(summaryIndex).toBeGreaterThan(-1);
+    expect(scrollIndex).toBeGreaterThan(summaryIndex);
+    expect(searchIndex).toBeGreaterThan(scrollIndex);
+    expect(html).not.toContain('data-testid="pause-reason-card"');
+    expect(html).not.toContain('data-testid="task-error-card"');
   });
 
   it("uses exact full-title wording consistently in task details", () => {

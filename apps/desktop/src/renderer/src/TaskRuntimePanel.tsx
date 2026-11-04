@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   BrowserHostState,
   ProgressSnapshot,
@@ -22,6 +22,8 @@ import {
   searchSessionView,
   stageLabel,
   TASK_STATUS_LABELS,
+  taskFailureView,
+  type TaskFailureView,
   type TaskPrimaryAction,
   valueString,
   workflowSteps,
@@ -285,7 +287,7 @@ export function SearchContextCard({
     return null;
   }
   return (
-    <section className="runtime-card search-context-card" data-testid="collection-session-summary">
+    <section className="runtime-card search-context-card" data-testid="task-search-context">
       <div className="runtime-card-heading">
         <strong>当前检索身份</strong>
         <span>{stageLabel(task.currentStage, String(checkpoint.currentAction || ""))}</span>
@@ -667,6 +669,33 @@ export function BrowserAccessStateCard({
   );
 }
 
+export function TaskFailureSummaryCard({
+  failure,
+  onOpen
+}: {
+  failure: TaskFailureView;
+  onOpen: () => void;
+}): React.JSX.Element {
+  return (
+    <section
+      className={`runtime-card task-failure-summary ${failure.severity}`}
+      data-testid="task-failure-summary"
+    >
+      <span className="eyebrow">任务已停止</span>
+      <strong>{failure.title}</strong>
+      <p>{failure.summary}</p>
+      <small>{failure.nextStep}</small>
+      <button
+        type="button"
+        className="secondary-button compact"
+        onClick={onOpen}
+      >
+        查看停止原因
+      </button>
+    </section>
+  );
+}
+
 export function TaskRuntimePanel({
   task,
   completed,
@@ -680,7 +709,8 @@ export function TaskRuntimePanel({
   primaryActionLabel = "",
   actionBusy = false,
   actionFeedback = null,
-  onPrimaryAction
+  onPrimaryAction,
+  onPauseDetailOpenChange
 }: {
   task: TaskRecord;
   completed?: number;
@@ -695,7 +725,38 @@ export function TaskRuntimePanel({
   actionBusy?: boolean;
   actionFeedback?: TaskActionFeedback | null;
   onPrimaryAction?: () => void;
+  onPauseDetailOpenChange?: (open: boolean) => void;
 }): React.JSX.Element {
+  const [detailOpen, setDetailOpen] = useState(false);
+  const failure = taskFailureView(task);
+
+  useEffect(() => {
+    onPauseDetailOpenChange?.(detailOpen);
+    return () => {
+      if (detailOpen) {
+        onPauseDetailOpenChange?.(false);
+      }
+    };
+  }, [detailOpen, onPauseDetailOpenChange]);
+
+  const detail: TaskPauseDetail = {
+    code: String(task.error?.code || ""),
+    title: failure?.title || "任务已停止",
+    message: String(task.error?.message || failure?.summary || ""),
+    summary: failure?.summary,
+    stage: stageLabel(
+      task.currentStage,
+      String(task.checkpoint.currentAction || "")
+    ),
+    checkpoint: checkpointSummary(task.checkpoint),
+    recommendation: failure?.nextStep || "",
+    nextStep: failure?.nextStep,
+    raw: {
+      error: task.error,
+      checkpoint: task.checkpoint
+    }
+  };
+
   return (
     <div className="task-runtime-stack" data-testid="task-runtime-panel">
       <TaskPrimaryActionBar
@@ -713,33 +774,41 @@ export function TaskRuntimePanel({
         completed={completed}
         total={total}
       />
-      <SearchContextCard task={task} />
-      <BrowserAccessStateCard
-        captchaVisible={browserCaptchaVisible}
-        captchaCheckedAt={browserCaptchaCheckedAt}
-        captchaSelector={browserCaptchaSelector}
-      />
-      {downloadIntentView(task.checkpoint) ? (
-        <DownloadIntentCard source={task.checkpoint} />
-      ) : (
-        <MissingDownloadIntentCard />
+      {failure && (
+        <TaskFailureSummaryCard
+          failure={failure}
+          onOpen={() => setDetailOpen(true)}
+        />
       )}
-      <PauseReasonCard
-        status={task.status}
-        checkpoint={task.checkpoint}
-        error={task.error}
-        candidateWaiting={candidateWaiting}
-        currentStage={task.currentStage}
-      />
-      <TaskErrorCard
-        error={task.error}
-        status={task.status}
-        currentStage={task.currentStage}
-        checkpoint={task.checkpoint}
-        completed={completed}
-        total={total}
-      />
-      <RuntimeAlertsCard alerts={alerts} />
+      <div className="task-runtime-scroll">
+        <SearchContextCard task={task} />
+        <BrowserAccessStateCard
+          captchaVisible={browserCaptchaVisible}
+          captchaCheckedAt={browserCaptchaCheckedAt}
+          captchaSelector={browserCaptchaSelector}
+        />
+        {downloadIntentView(task.checkpoint) ? (
+          <DownloadIntentCard source={task.checkpoint} />
+        ) : (
+          <MissingDownloadIntentCard />
+        )}
+        {!failure && (
+          <PauseReasonCard
+            status={task.status}
+            checkpoint={task.checkpoint}
+            error={task.error}
+            candidateWaiting={candidateWaiting}
+            currentStage={task.currentStage}
+          />
+        )}
+        <RuntimeAlertsCard alerts={alerts} />
+      </div>
+      {detailOpen && (
+        <TaskPauseDetailDialog
+          detail={detail}
+          onClose={() => setDetailOpen(false)}
+        />
+      )}
     </div>
   );
 }
