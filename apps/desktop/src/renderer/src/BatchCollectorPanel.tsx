@@ -145,6 +145,7 @@ export default function BatchCollectorPanel({
   const [actionFeedback, setActionFeedback] =
     useState<TaskActionFeedback | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pauseDetailOpen, setPauseDetailOpen] = useState(false);
   const startInFlightRef = useRef(false);
   const settingsInFlightRef = useRef(false);
   const [notice, setNotice] = useState(
@@ -845,6 +846,7 @@ export default function BatchCollectorPanel({
                 actionBusy={busy}
                 actionFeedback={actionFeedback}
                 onPrimaryAction={() => void runPrimaryAction()}
+                onPauseDetailOpenChange={setPauseDetailOpen}
               />
               <div className="batch-table">
                 <div className="batch-head">
@@ -877,6 +879,7 @@ export default function BatchCollectorPanel({
         mode="batch"
         browser={browser}
         settingsOpen={settingsOpen}
+        pauseDetailOpen={pauseDetailOpen}
         manualRecovery={manualRecovery}
         onToggleSettings={() => {
           if (

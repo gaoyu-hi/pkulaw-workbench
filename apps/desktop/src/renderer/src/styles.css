@@ -2779,6 +2779,10 @@ main {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.task-workspace-body.dialog-open {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .task-workspace-primary {
   min-width: 0;
   min-height: 0;
@@ -2827,6 +2831,10 @@ main {
 }
 
 .task-workspace-body.settings-open .browser-surface {
+  display: none;
+}
+
+.task-workspace-body.dialog-open .browser-surface {
   display: none;
 }
 

@@ -10,6 +10,7 @@ export interface TaskWorkspaceFrameProps {
   settingsPanel?: ReactNode;
   browser: BrowserHostState;
   settingsOpen: boolean;
+  pauseDetailOpen: boolean;
   manualRecovery: ManualRecoveryView;
   onToggleSettings: () => void;
 }
@@ -20,10 +21,17 @@ export default function TaskWorkspaceFrame({
   settingsPanel,
   browser,
   settingsOpen,
+  pauseDetailOpen,
   manualRecovery,
   onToggleSettings
 }: TaskWorkspaceFrameProps): React.JSX.Element {
   const modeLabel = mode === "single" ? "逐篇采集" : "批量采集";
+  const browserVisible = !settingsOpen && !pauseDetailOpen;
+  const bodyClassName = [
+    "task-workspace-body",
+    settingsOpen ? "settings-open" : "",
+    pauseDetailOpen ? "dialog-open" : ""
+  ].filter(Boolean).join(" ");
   return (
     <section className="task-workspace-frame">
       <header className="task-workspace-header">
@@ -45,15 +53,13 @@ export default function TaskWorkspaceFrame({
         </button>
       </header>
 
-      <div
-        className={`task-workspace-body ${settingsOpen ? "settings-open" : ""}`}
-      >
+      <div className={bodyClassName}>
         <div className="task-workspace-primary">
           {settingsOpen ? settingsPanel : taskPanel}
         </div>
         <BrowserSurface
           browser={browser}
-          visible={!settingsOpen}
+          visible={browserVisible}
           variant="task"
           onRefresh={() =>
             void window.pkulaw.browserNavigate("reload")

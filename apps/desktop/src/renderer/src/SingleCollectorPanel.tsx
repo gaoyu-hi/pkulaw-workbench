@@ -150,6 +150,7 @@ export default function SingleCollectorPanel({
   const [actionFeedback, setActionFeedback] =
     useState<TaskActionFeedback | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pauseDetailOpen, setPauseDetailOpen] = useState(false);
   const startInFlightRef = useRef(false);
   const settingsInFlightRef = useRef(false);
   const [notice, setNotice] = useState(
@@ -938,6 +939,7 @@ export default function SingleCollectorPanel({
                 actionBusy={busy}
                 actionFeedback={actionFeedback}
                 onPrimaryAction={() => void runPrimaryAction()}
+                onPauseDetailOpenChange={setPauseDetailOpen}
               />
 
               <ScanContinuitySummary checkpoint={details.task.checkpoint} />
@@ -1013,6 +1015,7 @@ export default function SingleCollectorPanel({
         mode="single"
         browser={browser}
         settingsOpen={settingsOpen}
+        pauseDetailOpen={pauseDetailOpen}
         manualRecovery={manualRecovery}
         onToggleSettings={() => {
           if (

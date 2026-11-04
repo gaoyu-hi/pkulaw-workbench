@@ -46,7 +46,8 @@ const browser: BrowserHostState = {
 
 function renderFrame(
   settingsOpen: boolean,
-  manualRecovery: ManualRecoveryView = idleManualRecovery
+  manualRecovery: ManualRecoveryView = idleManualRecovery,
+  pauseDetailOpen = false
 ): string {
   return renderToStaticMarkup(
     React.createElement(
@@ -55,6 +56,7 @@ function renderFrame(
         mode: "single",
         browser,
         settingsOpen,
+        pauseDetailOpen,
         manualRecovery,
         onToggleSettings: () => undefined,
         taskPanel: React.createElement(
@@ -92,6 +94,20 @@ describe("TaskWorkspaceFrame", () => {
     expect(markup.indexOf("task-workspace-primary")).toBeLessThan(
       markup.indexOf("settings-panel")
     );
+  });
+
+  it("hides the native browser while pause details are open", () => {
+    const markup = renderFrame(false, idleManualRecovery, true);
+
+    expect(markup).toContain('data-browser-visible="false"');
+    expect(markup).toContain("dialog-open");
+  });
+
+  it("restores the native browser when pause details close", () => {
+    const markup = renderFrame(false, idleManualRecovery, false);
+
+    expect(markup).toContain('data-browser-visible="true"');
+    expect(markup).not.toContain("dialog-open");
   });
 
   it("shows automatic recovery failure without a duplicate retry action", () => {
