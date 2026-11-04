@@ -5,7 +5,7 @@ import sys
 import time
 import uuid
 from collections import OrderedDict
-from threading import RLock
+from threading import Event, RLock, Thread
 from typing import Any, TextIO
 
 from . import __version__
@@ -13,6 +13,7 @@ from .batch_task import BatchTaskManager
 from .browser_lease import BrowserLeaseBusy, BrowserLeaseManager
 from .browser_bridge import BrowserBridge
 from .collector_preview import (
+    CollectorPreviewCancelled,
     CollectorPreviewService,
     checkpoint_preview_snapshot,
 )
@@ -59,6 +60,9 @@ class EngineApplication:
         self._operation_lock = RLock()
         self._operation_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._max_cached_operations = 1000
+        self._preflight_threads: dict[str, Thread] = {}
+        self._preflight_cancelled: dict[str, Event] = {}
+        self._preflight_lock = RLock()
         self._settings_stop_timeout_seconds = 10.0
         self.shutdown_requested = False
         self.browser_lease = browser_lease or BrowserLeaseManager(
@@ -505,6 +509,16 @@ class EngineApplication:
                             },
                         )
                     )
+                elif result.get("preparing"):
+                    events.append(
+                        event_message(
+                            "collector.preparing",
+                            {
+                                "task": result["task"],
+                                "mode": result["task"]["mode"],
+                            },
+                        )
+                    )
                 else:
                     events.append(
                         event_message(
@@ -634,7 +648,9 @@ class EngineApplication:
             task_id = str(params.get("taskId") or "").strip()
             if not task_id:
                 raise ValidationError("TASK_ID_REQUIRED", "taskId is required")
-            return response_message(request_id, self.single_manager.stop(task_id)), []
+            details = self.single_manager.stop(task_id)
+            self._cancel_collector_preflight(task_id)
+            return response_message(request_id, details), []
 
         if method == "single.continue":
             task_id = str(params.get("taskId") or "").strip()
@@ -707,7 +723,9 @@ class EngineApplication:
             task_id = str(params.get("taskId") or "").strip()
             if not task_id:
                 raise ValidationError("TASK_ID_REQUIRED", "taskId is required")
-            return response_message(request_id, self.batch_manager.stop(task_id)), []
+            details = self.batch_manager.stop(task_id)
+            self._cancel_collector_preflight(task_id)
+            return response_message(request_id, details), []
 
         if method == "batch.continue":
             task_id = str(params.get("taskId") or "").strip()
@@ -971,72 +989,111 @@ class EngineApplication:
                 "details": self._task_details(current),
                 "started": current["status"]
                 not in {"pending", "waiting_manual", "waiting_login", "failed", "stopped"},
+                "preparing": current["status"] == "preflight",
                 "error": current.get("error"),
                 "idempotent": True,
             }
 
         lease = self._acquire_browser_lease(task_id, mode)
-        try:
-            preview = self.preview_service.preview(mode, dict(task_input))
-        except ValidationError as exc:
-            lease_id = str(lease.get("leaseId") or "")
-            if lease.get("acquired"):
-                self.browser_lease.release(lease["leaseId"])
-            error = {
-                "code": exc.code,
-                "message": str(exc),
-            }
-            if exc.details:
-                error["details"] = dict(exc.details)
-            checkpoint = dict(task.get("checkpoint") or {})
-            checkpoint["collectorPreflight"] = {
-                "status": "failed",
-                "error": error,
-            }
-            checkpoint["accessRecovery"] = {
-                "taskId": task_id,
-                "leaseId": lease_id,
-                "browserLeaseTaskId": task_id,
-                "waitCode": exc.code,
-                "detectedAt": time.strftime(
-                    "%Y-%m-%dT%H:%M:%SZ",
-                    time.gmtime(),
-                ),
-            }
-            current = self.store.update_task(
-                task_id,
-                status="waiting_manual",
-                current_stage="collector-preflight",
-                error=error,
-                checkpoint=checkpoint,
-            )
-            return {
-                "task": current,
-                "preview": None,
-                "details": self._task_details(current),
-                "started": False,
-                "error": error,
-                "idempotent": False,
-            }
-
-        updated_input = dict(task_input)
-        updated_input["previewSnapshot"] = preview
-        current = self.store.update_task_input(task_id, updated_input)
-        checkpoint = dict(current.get("checkpoint") or {})
+        checkpoint = dict(task.get("checkpoint") or {})
         checkpoint["collectorPreflight"] = {
-            "status": "complete",
-            "previewFingerprint": preview.get("previewFingerprint"),
-            "generatedAt": preview.get("generatedAt"),
+            "status": "running",
+            "phase": "starting",
+            "completed": 0,
+            "total": None,
+            "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        snapshot = checkpoint_preview_snapshot(updated_input)
-        if snapshot:
-            checkpoint["previewSnapshot"] = snapshot
-        self.store.update_task(
+        current = self.store.update_task(
             task_id,
+            status="preflight",
             current_stage="collector-preflight",
             checkpoint=checkpoint,
         )
+        worker = Thread(
+            target=self._run_collector_preflight,
+            args=(
+                task_id,
+                mode,
+                dict(task_input),
+                lease,
+            ),
+            name=f"collector-preflight-{task_id[:8]}",
+            daemon=True,
+        )
+        cancel_event = Event()
+        with self._preflight_lock:
+            self._preflight_threads[task_id] = worker
+            self._preflight_cancelled[task_id] = cancel_event
         try:
+            worker.start()
+        except Exception:
+            with self._preflight_lock:
+                self._preflight_threads.pop(task_id, None)
+                self._preflight_cancelled.pop(task_id, None)
+            if lease.get("acquired"):
+                self.browser_lease.release(lease["leaseId"])
+            raise
+        return {
+            "task": current,
+            "preview": None,
+            "details": self._task_details(current),
+            "started": False,
+            "preparing": True,
+            "error": None,
+            "idempotent": False,
+        }
+
+    def _run_collector_preflight(
+        self,
+        task_id: str,
+        mode: str,
+        task_input: dict[str, Any],
+        lease: dict[str, Any],
+    ) -> None:
+        worker_store = TaskStore(self.store.database_path)
+        try:
+            with self._preflight_lock:
+                cancel_event = self._preflight_cancelled.get(task_id)
+            preview = self.preview_service.preview(
+                mode,
+                dict(task_input),
+                progress=lambda progress: self._record_preflight_progress(
+                    worker_store,
+                    task_id,
+                    progress,
+                ),
+                cancel_check=(
+                    cancel_event.is_set
+                    if cancel_event is not None
+                    else None
+                ),
+            )
+            if cancel_event is not None and cancel_event.is_set():
+                raise CollectorPreviewCancelled()
+            current = worker_store.get_task(task_id)
+            if current is None or current["status"] != "preflight":
+                raise CollectorPreviewCancelled()
+            updated_input = dict(task_input)
+            updated_input["previewSnapshot"] = preview
+            current = worker_store.update_task_input(
+                task_id,
+                updated_input,
+                allowed_statuses=frozenset({"preflight"}),
+            )
+            checkpoint = dict(current.get("checkpoint") or {})
+            checkpoint["collectorPreflight"] = {
+                "status": "complete",
+                "previewFingerprint": preview.get("previewFingerprint"),
+                "generatedAt": preview.get("generatedAt"),
+            }
+            snapshot = checkpoint_preview_snapshot(updated_input)
+            if snapshot:
+                checkpoint["previewSnapshot"] = snapshot
+            worker_store.update_task(
+                task_id,
+                current_stage="collector-preflight",
+                checkpoint=checkpoint,
+            )
             if mode == "single":
                 details = self.single_manager.start(
                     task_id,
@@ -1049,21 +1106,172 @@ class EngineApplication:
                     retry_failed=False,
                     lease_id=str(lease["leaseId"]),
                 )
-        except Exception:
+            current = worker_store.get_task(task_id)
+            if current is None:
+                raise ValidationError("TASK_NOT_FOUND", "任务记录已不存在")
+            self.emit(
+                event_message(
+                    "task.preflight.completed",
+                    {
+                        "taskId": task_id,
+                        "task": current,
+                        "details": details,
+                        "preview": preview,
+                    },
+                )
+            )
+        except CollectorPreviewCancelled:
             if lease.get("acquired"):
                 self.browser_lease.release(lease["leaseId"])
-            raise
-        current = self.store.get_task(task_id)
-        if current is None:
-            raise ValidationError("TASK_NOT_FOUND", "任务记录已不存在")
-        return {
-            "task": current,
-            "preview": preview,
-            "details": details,
-            "started": True,
-            "error": None,
-            "idempotent": False,
+            current = worker_store.get_task(task_id)
+            if current is not None:
+                self.emit(
+                    event_message(
+                        "task.preflight.cancelled",
+                        {
+                            "taskId": task_id,
+                            "task": current,
+                            "details": self._task_details(current),
+                        },
+                    )
+                )
+        except ValidationError as exc:
+            current = worker_store.get_task(task_id)
+            if current is None or current["status"] != "preflight":
+                if lease.get("acquired"):
+                    self.browser_lease.release(lease["leaseId"])
+                return
+            if lease.get("acquired"):
+                self.browser_lease.release(lease["leaseId"])
+            error = {
+                "code": exc.code,
+                "message": str(exc),
+            }
+            if exc.details:
+                error["details"] = dict(exc.details)
+            current = worker_store.get_task(task_id)
+            checkpoint = dict((current or {}).get("checkpoint") or {})
+            checkpoint["collectorPreflight"] = {
+                "status": "failed",
+                "error": error,
+            }
+            checkpoint["accessRecovery"] = {
+                "taskId": task_id,
+                "leaseId": str(lease.get("leaseId") or ""),
+                "browserLeaseTaskId": task_id,
+                "waitCode": exc.code,
+                "detectedAt": time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ",
+                    time.gmtime(),
+                ),
+            }
+            current = worker_store.update_task(
+                task_id,
+                status="waiting_manual",
+                current_stage="collector-preflight",
+                error=error,
+                checkpoint=checkpoint,
+            )
+            self.emit(
+                event_message(
+                    "task.preflight.failed",
+                    {
+                        "taskId": task_id,
+                        "task": current,
+                        "details": self._task_details(current),
+                        "error": error,
+                    },
+                )
+            )
+        except Exception as exc:
+            if lease.get("acquired"):
+                self.browser_lease.release(lease["leaseId"])
+            error = {
+                "code": "PREFLIGHT_FAILED",
+                "message": "启动预检失败，请检查浏览器页面后重试",
+                "details": {"reason": str(exc)},
+            }
+            current = worker_store.get_task(task_id)
+            checkpoint = dict((current or {}).get("checkpoint") or {})
+            checkpoint["collectorPreflight"] = {
+                "status": "failed",
+                "error": error,
+            }
+            current = worker_store.update_task(
+                task_id,
+                status="failed",
+                current_stage="collector-preflight",
+                error=error,
+                checkpoint=checkpoint,
+            )
+            self.logger.write(
+                "error",
+                "collector.preflight_failed",
+                "Collector preflight failed",
+                {
+                    "taskId": task_id,
+                    "error": repr(exc),
+                },
+            )
+            self.emit(
+                event_message(
+                    "task.preflight.failed",
+                    {
+                        "taskId": task_id,
+                        "task": current,
+                        "details": self._task_details(current),
+                        "error": error,
+                    },
+                )
+            )
+        finally:
+            worker_store.close()
+            with self._preflight_lock:
+                self._preflight_threads.pop(task_id, None)
+                self._preflight_cancelled.pop(task_id, None)
+
+    def _record_preflight_progress(
+        self,
+        store: TaskStore,
+        task_id: str,
+        progress: dict[str, Any],
+    ) -> None:
+        current = store.get_task(task_id)
+        with self._preflight_lock:
+            cancel_event = self._preflight_cancelled.get(task_id)
+        if (
+            current is None
+            or current["status"] != "preflight"
+            or (cancel_event is not None and cancel_event.is_set())
+        ):
+            return
+        checkpoint = dict(current.get("checkpoint") or {})
+        checkpoint["collectorPreflight"] = {
+            "status": "running",
+            **dict(progress),
         }
+        current = store.update_task(
+            task_id,
+            status="preflight",
+            current_stage="collector-preflight",
+            checkpoint=checkpoint,
+        )
+        self.emit(
+            event_message(
+                "task.preflight.progress",
+                {
+                    "taskId": task_id,
+                    "task": current,
+                    **dict(progress),
+                },
+            )
+        )
+
+    def _cancel_collector_preflight(self, task_id: str) -> None:
+        with self._preflight_lock:
+            cancel_event = self._preflight_cancelled.get(task_id)
+        if cancel_event is not None:
+            cancel_event.set()
 
     def _resume_after_manual(
         self,

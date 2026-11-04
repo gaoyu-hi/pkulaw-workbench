@@ -399,6 +399,7 @@ export interface CollectorStartResult {
   preview: TaskPreviewSummary | null;
   details: TaskDetails | BatchTaskDetails;
   started: boolean;
+  preparing: boolean;
   error: ProtocolError | null;
   idempotent: boolean;
 }

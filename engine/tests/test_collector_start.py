@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import tempfile
+import time
 import unittest
+from threading import Event
 from pathlib import Path
 from unittest.mock import patch
 
@@ -72,15 +74,29 @@ class CollectorStartTests(unittest.TestCase):
         }
 
     def _running_details(self, task_id: str) -> dict[str, object]:
-        task = self.store.update_task(
-            task_id,
-            status="running",
-            current_stage="running",
-        )
-        return {
-            "task": task,
-            "items": self.store.list_task_items(task_id),
-        }
+        store = TaskStore(self.store.database_path)
+        try:
+            task = store.update_task(
+                task_id,
+                status="running",
+                current_stage="running",
+            )
+            return {
+                "task": task,
+                "items": store.list_task_items(task_id),
+            }
+        finally:
+            store.close()
+
+    def _wait_for_preflight(self, task_id: str, timeout: float = 2) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self.application._preflight_lock:
+                thread = self.application._preflight_threads.get(task_id)
+            if thread is None:
+                return
+            thread.join(timeout=min(0.05, deadline - time.monotonic()))
+        self.fail(f"collector preflight did not finish for {task_id}")
 
     def test_start_collector_creates_one_task_and_starts_after_preview(self) -> None:
         with (
@@ -100,14 +116,16 @@ class CollectorStartTests(unittest.TestCase):
                 "collector.start",
                 self._params(),
             )
+            task_id = response["result"]["task"]["id"]
+            self._wait_for_preflight(task_id)
 
         result = response["result"]
         tasks = self.store.list_tasks()
         self.assertTrue(response["ok"])
         self.assertEqual(len(tasks), 1)
         self.assertEqual(result["task"]["id"], tasks[0]["id"])
-        self.assertEqual(result["preview"]["previewFingerprint"], "preview-1")
-        self.assertTrue(result["started"])
+        self.assertTrue(result["preparing"])
+        self.assertFalse(result["started"])
         self.assertEqual(
             tasks[0]["input"]["previewSnapshot"]["previewFingerprint"],
             "preview-1",
@@ -120,8 +138,101 @@ class CollectorStartTests(unittest.TestCase):
         start.assert_called_once()
         self.assertEqual(
             [item["event"] for item in events],
-            ["task.created", "collector.started"],
+            ["task.created", "collector.preparing"],
         )
+
+    def test_start_collector_returns_preflight_task_before_preview_finishes(
+        self,
+    ) -> None:
+        preview_started = Event()
+        release_preview = Event()
+
+        def slow_preview(*_args, **_kwargs):
+            preview_started.set()
+            release_preview.wait(timeout=5)
+            return PREVIEW
+
+        with (
+            patch.object(
+                self.application.preview_service,
+                "preview",
+                side_effect=slow_preview,
+            ),
+            patch.object(
+                self.application.single_manager,
+                "start",
+                side_effect=lambda task_id, **_: self._running_details(task_id),
+            ),
+        ):
+            started = time.monotonic()
+            response, events = self.application._dispatch(
+                "collector-slow-preflight",
+                "collector.start",
+                self._params(),
+            )
+            elapsed = time.monotonic() - started
+
+            self.assertTrue(preview_started.wait(timeout=1))
+            result = response["result"]
+            self.assertLess(elapsed, 0.5)
+            self.assertTrue(result["preparing"])
+            self.assertFalse(result["started"])
+            self.assertEqual(result["task"]["status"], "preflight")
+            self.assertEqual(
+                [item["event"] for item in events],
+                ["task.created", "collector.preparing"],
+            )
+
+            listed_response, _ = self.application._dispatch(
+                "collector-list-during-preflight",
+                "task.list",
+                {"limit": 10},
+            )
+            self.assertEqual(
+                [task["id"] for task in listed_response["result"]["tasks"]],
+                [result["task"]["id"]],
+            )
+            release_preview.set()
+            self._wait_for_preflight(result["task"]["id"])
+
+    def test_stop_during_preflight_keeps_task_stopped_and_releases_browser(
+        self,
+    ) -> None:
+        preview_started = Event()
+        release_preview = Event()
+
+        def slow_preview(*_args, **_kwargs):
+            preview_started.set()
+            release_preview.wait(timeout=5)
+            return PREVIEW
+
+        with patch.object(
+            self.application.preview_service,
+            "preview",
+            side_effect=slow_preview,
+        ):
+            response, _ = self.application._dispatch(
+                "collector-stop-preflight",
+                "collector.start",
+                self._params(),
+            )
+            task_id = response["result"]["task"]["id"]
+            self.assertTrue(preview_started.wait(timeout=1))
+
+            stopped, _ = self.application._dispatch(
+                "collector-stop-during-preflight",
+                "single.stop",
+                {"taskId": task_id},
+            )
+            self.assertEqual(stopped["result"]["task"]["status"], "stopped")
+
+            release_preview.set()
+            self._wait_for_preflight(task_id)
+
+        final = self.store.get_task(task_id)
+        self.assertIsNotNone(final)
+        self.assertEqual(final["status"], "stopped")
+        self.assertTrue(self.application.browser_lease.state()["available"])
 
     def test_start_collector_preflight_failure_has_no_worker_or_download(self) -> None:
         with (
@@ -140,14 +251,21 @@ class CollectorStartTests(unittest.TestCase):
                 "collector.start",
                 self._params(),
             )
+            task_id = response["result"]["task"]["id"]
+            self._wait_for_preflight(task_id)
 
         result = response["result"]
         tasks = self.store.list_tasks()
         self.assertTrue(response["ok"])
         self.assertEqual(len(tasks), 1)
         self.assertFalse(result["started"])
+        self.assertTrue(result["preparing"])
         self.assertIsNone(result["preview"])
-        self.assertEqual(result["error"]["code"], "MANUAL_ACTION_REQUIRED")
+        self.assertIsNone(result["error"])
+        self.assertEqual(
+            tasks[0]["error"]["code"],
+            "MANUAL_ACTION_REQUIRED",
+        )
         self.assertEqual(tasks[0]["status"], "waiting_manual")
         self.assertEqual(
             tasks[0]["checkpoint"]["accessRecovery"]["taskId"],
@@ -178,6 +296,7 @@ class CollectorStartTests(unittest.TestCase):
                 "collector.start",
                 self._params(),
             )
+            self._wait_for_preflight(first["result"]["task"]["id"])
             second, _ = self.application._dispatch(
                 "collector-second",
                 "collector.start",

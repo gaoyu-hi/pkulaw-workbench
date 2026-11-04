@@ -350,6 +350,9 @@ describe("task presentation", () => {
 
   it("keeps pause, resume and stop buttons mutually sensible", () => {
     expect(
+      collectionActions(task({ status: "preflight" }))
+    ).toMatchObject({ pause: false, stop: true, resume: false });
+    expect(
       collectionActions(task({ status: "running" }))
     ).toMatchObject({ pause: true, stop: true, resume: false });
     expect(

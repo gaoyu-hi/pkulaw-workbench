@@ -35,6 +35,10 @@ from .sources.search_mode import resolve_search_mode
 from .storage import ValidationError
 
 
+class CollectorPreviewCancelled(Exception):
+    pass
+
+
 @dataclass(frozen=True)
 class PreviewConfig:
     mode: str
@@ -185,7 +189,13 @@ class CollectorPreviewService:
         self.logger = logger
         self.adapter_factory = adapter_factory or PkulawAdapter
 
-    def preview(self, mode: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def preview(
+        self,
+        mode: str,
+        payload: dict[str, Any],
+        progress: Callable[[dict[str, Any]], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
         config = parse_preview_config(mode, payload)
         adapter = self.adapter_factory(self.browser_bridge, self.logger)
         started = time.monotonic()
@@ -194,10 +204,43 @@ class CollectorPreviewService:
         skipped_scopes: list[
             tuple[int, int, str, str, str]
         ] = []
+
+        def report(
+            phase: str,
+            completed: int,
+            total: int | None,
+            **details: Any,
+        ) -> None:
+            if progress is None:
+                return
+            try:
+                progress(
+                    {
+                        "phase": phase,
+                        "completed": completed,
+                        "total": total,
+                        **details,
+                    }
+                )
+            except Exception as exc:
+                self.logger.write(
+                    "warn",
+                    "task.preflight_progress_failed",
+                    "Failed to report collector preflight progress",
+                    {"error": repr(exc)},
+                )
+
+        def ensure_not_cancelled() -> None:
+            if cancel_check is not None and cancel_check():
+                raise CollectorPreviewCancelled()
+
+        ensure_not_cancelled()
+        report("discovering-years", 0, None)
         if config.year_selection.mode == "range":
             scopes = []
             for query_index, query in enumerate(config.queries):
                 for library_index, library in enumerate(config.libraries):
+                    ensure_not_cancelled()
                     request = SearchRequestIdentity(
                         query=query,
                         match_mode=config.match_mode,
@@ -311,7 +354,9 @@ class CollectorPreviewService:
                 config.libraries,
                 config.year_selection,
             )
-        for combination in combinations:
+        report("searching", 0, len(combinations))
+        for combination_index, combination in enumerate(combinations, start=1):
+            ensure_not_cancelled()
             request = SearchRequestIdentity(
                 query=combination.query,
                 match_mode=config.match_mode,
@@ -353,6 +398,16 @@ class CollectorPreviewService:
                         "skipReason": str(exc),
                     }
                 )
+                report(
+                    "searching",
+                    combination_index,
+                    len(combinations),
+                    query=request.query,
+                    year=request.year,
+                    library=request.library,
+                    resultCount=0,
+                )
+                ensure_not_cancelled()
                 continue
             except SourceAccessError as exc:
                 raise ValidationError(
@@ -422,6 +477,16 @@ class CollectorPreviewService:
                         "windowCode": window.code,
                     }
                 )
+                report(
+                    "searching",
+                    combination_index,
+                    len(combinations),
+                    query=session.query,
+                    year=session.year,
+                    library=session.library,
+                    resultCount=session.result_count,
+                )
+                ensure_not_cancelled()
             except SearchSessionError as exc:
                 raise ValidationError(
                     getattr(exc, "code", "RESULTS_STALE"),

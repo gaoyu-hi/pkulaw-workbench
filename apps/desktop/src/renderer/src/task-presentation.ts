@@ -1130,7 +1130,7 @@ export function collectionActions(
   if (scale) reason = "请先确认批量规模";
   return {
     start: task.status === "pending",
-    pause: ["preflight", "running", "verifying"].includes(task.status),
+    pause: ["running", "verifying"].includes(task.status),
     resume: task.status === "paused" && !hardStop,
     stop: active && task.status !== "stopping",
     continue:

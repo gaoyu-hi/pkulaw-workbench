@@ -1,8 +1,8 @@
-# 北大法宝采集器 0.2.2
+# 北大法宝采集器 0.2.4
 
 Windows 桌面采集应用，采用 Electron、React、TypeScript 与 Python 后端。
 
-0.2.2 已接通真实 V6 页面适配、统一验证码状态、受控分页、内置浏览器
+0.2.4 已接通真实 V6 页面适配、统一验证码状态、受控分页、内置浏览器
 目标绑定、单篇/批量/数据处理暂停恢复停止、年份全部/单年/区间、
 逐组合尾页与分页上限、批量规模确认、原生 XLS 与本地派生目录、
 内置旧版 DOC 转换、正文完整性门禁、SQLite v6 来源模型、统一进度、
@@ -13,16 +13,18 @@ Windows 桌面采集应用，采用 Electron、React、TypeScript 与 Python 后
 111 个分区；真实下载采用固定分层样本，包括 2,784 条 I-7 Word、25 条
 I-7S 跨年样本和 100 条 I-8S 地方双批次。
 
-`v0.2.2-hotfix.1` 修复真实结果页动态重建时选择器被短暂误判的问题；
-检索草稿在页面切换后保留，年份改为可手输的 1949 至当前年份。
+0.2.4 重点修复长时间启动预检造成的界面假死：任务创建后立即显示，
+预检在后台逐组合更新进度，任务列表和浏览器状态保持可读，预检阶段
+可以停止并释放浏览器租约。检索草稿在页面切换后保留，年份可手输
+1949 至当前年份。
 
 ## 团队使用
 
 完整的安装、登录、单篇、批量、数据处理、任务恢复、报告核验和故障处理说明见
-[`docs/PKULAW_WORKBENCH_0.2.2_TEAM_MANUAL_ZH.md`](docs/PKULAW_WORKBENCH_0.2.2_TEAM_MANUAL_ZH.md)。
+[`docs/PKULAW_WORKBENCH_0.2.4_TEAM_MANUAL_ZH.md`](docs/PKULAW_WORKBENCH_0.2.4_TEAM_MANUAL_ZH.md)。
 
-0.2.2 阶段 I 报告见
-[`docs/0.2.2_PHASE_I_TEST_REPORT.md`](docs/0.2.2_PHASE_I_TEST_REPORT.md)。
+0.2.4 发布说明与验收记录见
+[`docs/2026-11-05_PREFLIGHT_ASYNC_RELEASE.md`](docs/2026-11-05_PREFLIGHT_ASYNC_RELEASE.md)。
 
 ## 目录
 
@@ -55,7 +57,7 @@ pnpm verify:portable
 
 发布便携包会生成：
 
-- `outputs/北大法宝采集器_Windows便携版_0.2.2_<日期>.zip`
+- `outputs/北大法宝采集器_Windows便携版_0.2.4_<日期>.zip`
 - 同名 `.sha256`；
 - `outputs/北大法宝采集器_源码与构建脚本_<日期>.zip` 及 SHA-256。
 

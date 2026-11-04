@@ -450,7 +450,9 @@ export default function BatchCollectorPanel({
       setSelectedTaskId(result.task.id);
       await refreshTaskList();
       setNotice(
-        result.started
+        result.preparing
+          ? "批量任务已创建，正在核验检索结果窗口；任务进度会实时显示。"
+          : result.started
           ? "批量任务已创建并开始运行，单批最多 50 条。"
           : `任务已创建，启动前核验需要处理：${
               result.error?.message || "请检查当前页面"

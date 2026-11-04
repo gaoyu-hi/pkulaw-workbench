@@ -1000,6 +1000,7 @@ function setLogicalContentSize(
   width: number,
   height: number
 ): void {
+  window.webContents.setZoomFactor(1);
   const [contentWidth, contentHeight] = window.getContentSize();
   const [windowWidth, windowHeight] = window.getSize();
   window.setSize(
@@ -1007,6 +1008,16 @@ function setLogicalContentSize(
     height + windowHeight - contentHeight,
     false
   );
+  const [actualContentWidth, actualContentHeight] =
+    window.getContentSize();
+  const zoomFactor = Math.min(
+    1,
+    actualContentWidth / width,
+    actualContentHeight / height
+  );
+  if (zoomFactor < 0.999) {
+    window.webContents.setZoomFactor(zoomFactor);
+  }
 }
 
 async function runUnifiedWorkspaceSmoke(
@@ -1380,17 +1391,30 @@ async function runUnifiedWorkspaceSmoke(
   const secondStart = await window.webContents.executeJavaScript(
     `window.pkulaw.startCollectorTask(${JSON.stringify(singleInput)})`
   ) as CollectorStartResult;
+  const firstStarted = await waitForTask(
+    service,
+    firstStart.task.id,
+    (details) =>
+      details.task.status !== "pending" &&
+      details.task.status !== "preflight",
+    45_000
+  );
   const afterStart = (await service.request("task.list", { limit: 500 })) as {
     tasks?: TaskRecord[];
   };
   const afterStartCount = (afterStart.tasks || []).length;
+  const firstPreview = (firstStarted.task.checkpoint.previewSnapshot || {}) as {
+    downloadsStarted?: number;
+    downloadIntentsCreated?: number;
+    tasksCreated?: number;
+  };
   if (
     afterStartCount !== beforeStartCount + 1 ||
     firstStart.task.id !== secondStart.task.id ||
-    firstStart.preview?.downloadsStarted !== 0 ||
-    firstStart.preview?.downloadIntentsCreated !== 0 ||
-    firstStart.preview?.tasksCreated !== 0 ||
-    firstStart.started !== true ||
+    firstPreview.downloadsStarted !== 0 ||
+    firstPreview.downloadIntentsCreated !== 0 ||
+    firstPreview.tasksCreated !== 0 ||
+    (!firstStart.preparing && !firstStart.started) ||
     secondStart.idempotent !== true
   ) {
     throw new Error(
@@ -1695,10 +1719,17 @@ async function runUnifiedWorkspaceSmoke(
   const stopSummaryStart = await window.webContents.executeJavaScript(
     `window.pkulaw.startCollectorTask(${JSON.stringify(stopSummaryInput)})`
   ) as CollectorStartResult;
+  const stopSummaryWaiting = await waitForTask(
+    service,
+    stopSummaryStart.task.id,
+    (details) => details.task.status === "waiting_manual",
+    45_000
+  );
   if (
     stopSummaryStart.started !== false ||
     !stopSummaryStart.task?.id ||
-    !stopSummaryStart.error
+    stopSummaryStart.error !== null ||
+    !stopSummaryWaiting.task.error
   ) {
     throw new Error(
       `停止摘要任务未按预期在预检阶段停止：${JSON.stringify(
@@ -4975,8 +5006,8 @@ async function runStage6Smoke(
 
     const diagnostics = await runDiagnostics(appInfo, service, browserHost);
     if (
-      appInfo.version !== "0.2.3" ||
-      service.getState().engineVersion !== "0.2.3"
+      appInfo.version !== "0.2.4" ||
+      service.getState().engineVersion !== "0.2.4"
     ) {
       throw new Error(
         `Application/backend version mismatch: ${appInfo.version}/${service.getState().engineVersion}`

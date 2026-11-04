@@ -178,7 +178,7 @@ function App(): React.JSX.Element {
         </nav>
         <div className="sidebar-foot">
           <span>本地工作台</span>
-          <strong>v{appInfo?.version || "0.2.3"}</strong>
+          <strong>v{appInfo?.version || "0.2.4"}</strong>
         </div>
       </aside>
 
