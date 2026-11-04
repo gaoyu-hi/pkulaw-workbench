@@ -145,7 +145,7 @@ export default function SettingsPanel({
       <div className="settings-hero panel">
         <div>
           <span className="eyebrow">
-            {appInfo?.version || "0.2.2"} · 设置与诊断
+            {appInfo?.version || "0.2.3"} · 设置与诊断
           </span>
           <h2>运行预检与团队环境健康</h2>
           <p>检查 Python、SQLite、浏览器、网络、日志、数据目录和显示缩放。</p>

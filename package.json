@@ -1,6 +1,6 @@
 {
   "name": "pkulaw-workbench",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "scripts": {
     "dev": "pnpm --dir apps/desktop dev",
