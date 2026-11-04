@@ -267,7 +267,10 @@ def expand_search_combinations_for_year_windows(
     *,
     require_all: bool = True,
 ) -> list[SearchCombination]:
-    selections: dict[tuple[int, str, str], YearSelection] = {}
+    selections: dict[
+        tuple[int, str, str],
+        tuple[YearSelection, tuple[str, ...]],
+    ] = {}
     for raw in metadata.get("yearWindows") or []:
         if not isinstance(raw, dict):
             continue
@@ -283,25 +286,53 @@ def expand_search_combinations_for_year_windows(
             )
         except ValidationError:
             continue
+        adjustment = (
+            raw.get("yearWindowAdjustment")
+            if isinstance(raw.get("yearWindowAdjustment"), dict)
+            else {}
+        )
+        available_years = tuple(
+            sorted(
+                {
+                    str(year)
+                    for year in adjustment.get("availableYears") or []
+                    if _optional_year(year) is not None
+                },
+                key=int,
+            )
+        )
+        if selection.mode == "range" and available_years:
+            assert (
+                selection.start_year is not None
+                and selection.end_year is not None
+            )
+            years = tuple(
+                year
+                for year in available_years
+                if selection.start_year <= int(year) <= selection.end_year
+            )
+        else:
+            years = tuple(selection.years)
         selections[
             (
                 int(raw.get("queryIndex") or 0),
                 str(raw.get("library") or ""),
                 str(raw.get("query") or ""),
             )
-        ] = selection
+        ] = (selection, years)
     combinations: list[SearchCombination] = []
     for query_index, query in enumerate(queries):
         for library_index, library in enumerate(libraries):
-            selection = selections.get((query_index, library, query))
-            if selection is None:
+            selected = selections.get((query_index, library, query))
+            if selected is None:
                 if not require_all:
                     continue
                 raise ValidationError(
                     "YEAR_WINDOW_MISSING",
                     f"缺少 {query} / {library} 的真实年份窗口",
                 )
-            for year_index, year in enumerate(selection.years):
+            _selection, years = selected
+            for year_index, year in enumerate(years):
                 combinations.append(
                     SearchCombination(
                         query=query,

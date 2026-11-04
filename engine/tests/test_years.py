@@ -9,6 +9,7 @@ from pkulaw_engine.selections.years import (
     build_year_window_checkpoint,
     effective_year_window,
     expand_search_combinations,
+    expand_search_combinations_for_year_windows,
     finalize_year_stats,
     mark_current_year_status,
     parse_year_selection,
@@ -181,6 +182,30 @@ class YearSelectionTests(unittest.TestCase):
         self.assertEqual(checkpoint["effectiveYearSelection"]["startYear"], 2020)
         self.assertEqual(checkpoint["effectiveYearSelection"]["endYear"], 2025)
         self.assertEqual(len(checkpoint["yearWindows"]), 2)
+
+    def test_range_expansion_skips_years_missing_from_real_tree(self) -> None:
+        window = effective_year_window(
+            YearSelection(
+                mode="range",
+                start_year=2008,
+                end_year=2026,
+            ),
+            ["2017", "2012"],
+        )
+        checkpoint = build_year_window_checkpoint(
+            [(0, 0, "残疾人体育", "local", window)]
+        )
+
+        combinations = expand_search_combinations_for_year_windows(
+            ["残疾人体育"],
+            ["local"],
+            checkpoint,
+        )
+
+        self.assertEqual(
+            [combination.year for combination in combinations],
+            ["2012", "2017"],
+        )
 
     def test_year_status_pause_resume_and_finalize(self) -> None:
         checkpoint = {
