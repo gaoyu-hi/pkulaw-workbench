@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN" data-pkulaw-profile="pkulaw-v6" data-fixture-scenario="selector-flicker">
+<head><meta charset="utf-8"><title>选择器短暂消失后恢复</title></head>
+<body>
+  <input id="IsUserLogin" type="hidden" value="true">
+  <form id="main_form">
+    <input name="SearchKeywordType" type="hidden" value="Title">
+    <input id="txtSearch" type="text">
+    <input id="accurate" type="radio" checked>
+    <a id="btnSearch" role="button">检索</a>
+  </form>
+  <div id="leftContent"></div>
+  <div id="rightContent">
+    <div class="list-wrap">
+      <div class="list-tool-wrap"><span class="total">共 1 篇</span></div>
+      <div class="accompanying-wrap">
+        <div class="item">
+          <div class="t">
+            <label name="sortNum">1.</label>
+            <input type="checkbox" name="recordList" value="flicker-policy-001">
+            <h4><a href="/chl/flicker-policy-001.html">短暂重绘政策</a></h4>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

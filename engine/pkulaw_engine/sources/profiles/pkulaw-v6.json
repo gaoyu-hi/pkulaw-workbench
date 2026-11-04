@@ -1,0 +1,280 @@
+{
+  "profileId": "pkulaw-v6",
+  "version": "pkulaw-v6-2026-11-01-3",
+  "description": "Sanitized live-verified Pkulaw V6 page profile",
+  "detection": {
+    "any": [
+      "#main_form",
+      "#btnSearch",
+      "#lIsLogin",
+      "#IsUserLogin",
+      ".fulltext-container",
+      ".tiao-wrap .kuan-content"
+    ]
+  },
+  "requiredControls": [
+    "searchInput",
+    "searchSubmit",
+    "exactMode",
+    "libraryRoot"
+  ],
+  "diagnosticControls": [
+    "searchInput",
+    "searchSubmit",
+    "exactMode",
+    "titleSearchType",
+    "libraryRoot",
+    "pageSize",
+    "pageSizeTrigger",
+    "pageSizeMenu",
+    "pageSizeItem",
+    "pageSizeHidden",
+    "yearFilter",
+    "provinceFilter",
+    "timelinessFilter",
+    "groupUngroup",
+    "resultsRoot",
+    "resultLink",
+    "resultNumber",
+    "batchCheckbox",
+    "resultCount",
+    "pagination",
+    "nextPage",
+    "detailTitle",
+    "detailFields",
+    "detailBody",
+    "downloadWord",
+    "login",
+    "loggedIn",
+    "captcha"
+  ],
+  "requiredByPage": {
+    "search": [
+      "searchInput",
+      "searchSubmit",
+      "exactMode",
+      "libraryRoot"
+    ],
+    "results": [
+      "resultsRoot",
+      "resultLink",
+      "resultNumber",
+      "batchCheckbox",
+      "resultCount"
+    ],
+    "detail": [
+      "detailTitle",
+      "detailFields",
+      "detailBody",
+      "downloadWord"
+    ]
+  },
+  "selectorGroups": {
+    "search": [
+      "searchInput",
+      "searchSubmit",
+      "exactMode",
+      "libraryRoot"
+    ],
+    "filters": {
+      "controls": [
+        "pageSize",
+        "yearFilter",
+        "provinceFilter",
+        "timelinessFilter",
+        "groupUngroup"
+      ],
+      "optional": [
+        "provinceFilter",
+        "groupUngroup"
+      ]
+    },
+    "results": [
+      "resultsRoot",
+      "resultLink",
+      "resultNumber",
+      "batchCheckbox",
+      "resultCount"
+    ],
+    "pagination": {
+      "controls": [
+        "pagination",
+        "nextPage"
+      ],
+      "optional": [
+        "pagination",
+        "nextPage"
+      ]
+    },
+    "detail": [
+      "detailTitle",
+      "detailFields",
+      "detailBody",
+      "downloadWord"
+    ],
+    "access": {
+      "controls": [
+        "loggedIn",
+        "login",
+        "captcha"
+      ],
+      "optional": [
+        "login",
+        "captcha"
+      ]
+    }
+  },
+  "selectors": {
+    "searchPath": "",
+    "searchInput": "#txtSearch",
+    "searchSubmit": "#btnSearch",
+    "exactMode": "#accurate",
+    "titleSearchType": "#main_form input[name=\"SearchKeywordType\"][value=\"Title\"]",
+    "libraryRoot": "#subLibraries",
+    "libraryAttribute": "library",
+    "libraryHomeUrl": "https://www.pkulaw.com/law?way=listCrumbs",
+    "libraryRoutes": {
+      "chl": "https://www.pkulaw.com/law/chl?way=listCrumbs",
+      "lar": "https://www.pkulaw.com/law/lar?way=listCrumbs"
+    },
+    "librarySearchActions": {
+      "chl": "https://www.pkulaw.com/law/chl",
+      "lar": "https://www.pkulaw.com/law/lar"
+    },
+    "pageSize": ".articleSelect, #right_form input[name=\"Pager.PageSize\"], input[name=\"Pager.PageSize\"]",
+    "pageSizeTrigger": ".articleSelect",
+    "pageSizeMenu": "#recordPage",
+    "pageSizeItem": "#recordPage dd",
+    "pageSizeHidden": "#right_form input[name=\"Pager.PageSize\"], input[name=\"Pager.PageSize\"]",
+    "rightForm": "#right_form",
+    "yearFilter": "#leftContent .recursion-tree:has(a.fold[searchname=\"IssueDate\"])",
+    "provinceFilter": "#leftContent .recursion-tree:has(a.fold[searchname=\"IssueDepartment\"])",
+    "timelinessFilter": "#leftContent .recursion-tree:has(a.fold[searchname=\"TimelinessDic\"])",
+    "filterItem": "a.level0, a[cluster_code], .node_name",
+    "groupUngroup": "#rightContent input[name=\"group\"][value=\"2\"]",
+    "filters": {
+      "year": "#leftContent .recursion-tree:has(a.fold[searchname=\"IssueDate\"])",
+      "province": "#leftContent .recursion-tree:has(a.fold[searchname=\"IssueDepartment\"])",
+      "timeliness": "#leftContent .recursion-tree:has(a.fold[searchname=\"TimelinessDic\"])"
+    },
+    "filterSubmit": "",
+    "resultsRoot": "#rightContent .list-wrap, .list-wrap",
+    "resultLink": ".accompanying-wrap .item .t h4 a[href*=\".html\"]",
+    "resultNumber": ".accompanying-wrap .item label[name=\"sortNum\"], .accompanying-wrap .item label:has(b[name=\"sortNum\"])",
+    "resultCount": ".list-tool-wrap .filtrater-box .total, .list-tool-wrap .total",
+    "pagination": ".pagination, .page-index, .pager, ul.pagination, nav.pagination",
+    "nextPage": ".pagination a.next, .page-index a.next, .pager a.next, a[rel=\"next\"]",
+    "batchButton": ".list-tool-wrap a.down-all",
+    "batchDialog": "[name=\"bathDownloadContainer\"], .layer-down-content",
+    "batchFormat": "input[name=\"batchDownload\"]",
+    "batchConfirm": "#batchDownload",
+    "batchCatalogFormatInput": "#catalog-format",
+    "batchCheckbox": ".accompanying-wrap .item .t > input[name=\"recordList\"], input[type=\"checkbox\"][name=\"recordList\"]",
+    "batchSort": ".accompanying-wrap label[name=\"sortNum\"], [name=\"sortNum\"]",
+    "detailTitle": ".fulltext-wrap > .content > h2.title, .fulltext-tool-new h2.title-position",
+    "detailBody": "#divFullText.fulltext, .fulltext-wrap #divFullText",
+    "detailFields": ".fulltext-wrap > .content > .fields > ul > li, .fields li",
+    "downloadWord": "#downloadword, li.singleDownload[filetype=\"fullWord\"]",
+    "captcha": ".drag_text, #captcha-overlay, .verify-slider, .geetest_slider, [class*=\"captcha\"]",
+    "login": "#loginName, #password, form[action*=\"login\"]",
+    "loggedIn": "#lIsLogin[value=\"1\"], #IsUserLogin[value=\"true\"]",
+    "emptyMarkers": [
+      "抱歉，未找到相关结果",
+      "没有找到相关结果",
+      "未找到符合条件的法规",
+      "暂无相关结果"
+    ]
+  },
+  "fallbacks": {
+    "searchInput": [
+      {
+        "strategy": "css",
+        "value": "input.search-combox-input"
+      },
+      {
+        "strategy": "form-child",
+        "root": "#main_form, form",
+        "value": "input[type=\"text\"],input[type=\"search\"]"
+      }
+    ],
+    "searchSubmit": [
+      {
+        "strategy": "css",
+        "value": "a.btn-search, button.btn-search"
+      },
+      {
+        "strategy": "text",
+        "text": "检索",
+        "tags": "a,button,[role=\"button\"]"
+      },
+      {
+        "strategy": "form-child",
+        "root": "#main_form, form",
+        "value": "button[type=\"submit\"],input[type=\"submit\"]"
+      }
+    ],
+    "exactMode": [
+      {
+        "strategy": "css",
+        "value": "input[name=\"Search_Mode\"][value=\"Exact\"], input[name=\"Search_Mode\"]#accurate"
+      }
+    ],
+    "titleSearchType": [
+      {
+        "strategy": "css",
+        "value": "input[name=\"SearchKeywordType\"][value=\"Title\"]"
+      }
+    ],
+    "libraryRoot": [
+      {
+        "strategy": "css",
+        "value": "#subLibraries.library-wrap"
+      }
+    ],
+    "provinceFilter": [
+      {
+        "strategy": "css",
+        "value": ".left-tree-content .el-tree-node:has(.custom-tree-node[data-key=\"IssueDepartment\"])"
+      }
+    ],
+    "pageSize": [
+      {
+        "strategy": "attribute",
+        "attribute": "name",
+        "contains": "Pager.PageSize",
+        "tags": "input[type=\"hidden\"]"
+      }
+    ],
+    "detailTitle": [
+      {
+        "strategy": "css",
+        "value": ".fulltext-wrap .content h2.title"
+      }
+    ],
+    "detailBody": [
+      {
+        "strategy": "css",
+        "value": ".fulltext-wrap #divFullText"
+      }
+    ],
+    "detailFields": [
+      {
+        "strategy": "css",
+        "value": ".fulltext-wrap .fields li"
+      }
+    ],
+    "downloadWord": [
+      {
+        "strategy": "text",
+        "text": "下载WORD",
+        "tags": "a,button,[role=\"button\"]"
+      }
+    ],
+    "loggedIn": [
+      {
+        "strategy": "css",
+        "value": "#lIsLogin"
+      }
+    ]
+  }
+}

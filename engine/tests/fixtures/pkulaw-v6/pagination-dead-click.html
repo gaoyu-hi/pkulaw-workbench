@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN" data-pkulaw-profile="pkulaw-v6" data-next-click-action="noop" data-form-fallback="allowed">
+<head>
+  <meta charset="utf-8">
+  <title>下一页点击失效但表单提交可继续</title>
+</head>
+<body>
+  <form id="right_form" action="/law/search/RecordSearch" method="post">
+    <input name="OldPageIndex" type="hidden" value="0">
+    <input name="Pager.PageIndex" type="hidden" value="0">
+    <input name="PageIndex" type="hidden" value="0">
+    <input name="Pager.PageSize" type="hidden" value="20">
+  </form>
+  <nav class="pagination" data-page="1" data-total="3">
+    <a class="prev disabled">上一页</a>
+    <span>页数 1/3</span>
+    <a class="next" pageindex="2">下一页</a>
+    <a class="last" pageindex="3">尾页</a>
+  </nav>
+</body>
+</html>

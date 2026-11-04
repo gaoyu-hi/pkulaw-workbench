@@ -1,0 +1,4 @@
+DrissionPage==4.1.1.4
+python-docx==1.2.0
+openpyxl==3.1.5
+xlrd==2.0.2

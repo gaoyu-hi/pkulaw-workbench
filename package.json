@@ -1,0 +1,19 @@
+{
+  "name": "pkulaw-workbench",
+  "version": "0.2.2",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --dir apps/desktop dev",
+    "build": "pnpm --dir apps/desktop build",
+    "test": "node scripts/test-all.mjs",
+    "test:node": "pnpm --dir apps/desktop test",
+    "test:node:coverage": "pnpm --dir apps/desktop test:coverage",
+    "test:python": "node scripts/test-python.mjs",
+    "test:python:coverage": "node scripts/test-python-coverage.mjs",
+    "test:phase-a-baseline": "node scripts/phase-a-baseline.mjs",
+    "smoke": "pnpm --dir apps/desktop smoke",
+    "build:portable": "node scripts/build-portable.mjs",
+    "package:source": "node scripts/package-source.mjs",
+    "verify:portable": "node scripts/verify-portable.mjs"
+  }
+}

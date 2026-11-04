@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN" data-pkulaw-profile="pkulaw-v6" data-fixture-url="https://www.pkulaw.com/law/search/RecordSearch">
+<head>
+  <meta charset="utf-8">
+  <title>北大法宝 V6 RecordSearch 结果页脱敏夹具</title>
+</head>
+<body>
+  <input id="lIsLogin" type="hidden" value="1">
+  <input id="IsUserLogin" type="hidden" value="true">
+  <form id="main_form" action="/law/search/RecordSearch" method="post">
+    <input name="SearchKeywordType" type="hidden" value="FullText">
+    <input id="txtSearch" type="text" value="碳中和">
+    <input id="accurate" type="radio" checked>
+    <a id="btnSearch" class="btn-search" href="javascript:void(0)">新检索</a>
+  </form>
+  <form id="right_form">
+    <input name="OldPageIndex" type="hidden" value="0">
+    <input name="Pager.PageIndex" type="hidden" value="0">
+    <input name="PageIndex" type="hidden" value="0">
+    <input name="Pager.PageSize" type="hidden" value="100">
+  </form>
+  <div class="list-wrap">
+    <div class="list-tool-wrap">
+      <div class="filtrater-box"><span class="total">共2篇</span></div>
+      <a class="down-all">下载</a>
+    </div>
+    <div class="accompanying-wrap">
+      <div class="item">
+        <div class="t">
+          <label name="sortNum">1.</label>
+          <input type="checkbox" name="recordList" value="policy-001">
+          <h4><a href="/lar/policy-001.html">政策一</a></h4>
+        </div>
+      </div>
+      <div class="item">
+        <div class="t">
+          <label name="sortNum">2.</label>
+          <input type="checkbox" name="recordList" value="policy-002">
+          <h4><a href="/lar/policy-002.html">政策二</a></h4>
+        </div>
+      </div>
+    </div>
+    <nav class="pagination" data-page="1" data-total="2">
+      <a class="prev disabled">上一页</a>
+      <span>页数 1/2</span>
+      <a class="next" pageindex="2">下一页</a>
+    </nav>
+  </div>
+</body>
+</html>

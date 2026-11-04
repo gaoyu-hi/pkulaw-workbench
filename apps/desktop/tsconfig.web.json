@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["vite/client"],
+    "paths": {
+      "@renderer/*": ["./src/renderer/src/*"],
+      "@shared/*": ["./src/shared/*"]
+    }
+  },
+  "include": [
+    "src/renderer/src/**/*.ts",
+    "src/renderer/src/**/*.tsx",
+    "src/shared/**/*.ts",
+    "src/preload/index.d.ts",
+    "tests/data-presentation.test.ts",
+    "tests/collector-panels.test.ts",
+    "tests/collector-workflow.test.ts",
+    "tests/browser-surface.test.ts",
+    "tests/manual-recovery-ui.test.ts",
+    "tests/overview-workspace.test.ts",
+    "tests/task-settings-panel.test.ts",
+    "tests/task-workspace-frame.test.ts",
+    "tests/task-presentation.test.ts",
+    "tests/task-runtime.test.ts"
+  ]
+}

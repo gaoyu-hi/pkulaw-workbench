@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN" data-pkulaw-profile="pkulaw-v6" data-fixture-scenario="grouped-results">
+<head><meta charset="utf-8"><title>默认分组结果</title></head>
+<body>
+  <input id="IsUserLogin" type="hidden" value="true">
+  <form id="main_form">
+    <input name="SearchKeywordType" type="hidden" value="Title">
+    <input name="Pager.PageIndex" type="hidden" value="0">
+    <input name="Pager.PageSize" type="hidden" value="10">
+    <input id="txtSearch" type="text">
+    <input id="accurate" type="radio" checked>
+    <a id="btnSearch" role="button">检索</a>
+  </form>
+  <ul id="subLibraries"><li class="current"><a library="chl">中央法规</a></li></ul>
+  <div id="leftContent"></div>
+  <div id="rightContent">
+    <form id="right_form">
+      <input name="group" type="radio" value="0" checked>
+      <input name="group" type="radio" value="1">
+      <input name="group" type="radio" value="2">
+    </form>
+    <div class="list-wrap">
+      <div class="list-tool-wrap"><span class="total">共 94 篇</span></div>
+      <div class="grouping-title">法律（1）</div>
+      <div class="accompanying-wrap">
+        <div class="item">
+          <div class="t">
+            <label name="sortNum">1.</label>
+            <input type="checkbox" name="recordList" value="grouped-law-001">
+            <h4><a href="/chl/grouped-law-001.html">分组法律政策</a></h4>
+          </div>
+        </div>
+      </div>
+      <div class="grouping-title">部门规章（47）</div>
+      <div class="accompanying-wrap">
+        <div class="item">
+          <div class="t">
+            <label name="sortNum">1.</label>
+            <input type="checkbox" name="recordList" value="grouped-rule-001">
+            <h4><a href="/chl/grouped-rule-001.html">分组部门规章政策</a></h4>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

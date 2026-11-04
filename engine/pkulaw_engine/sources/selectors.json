@@ -1,0 +1,38 @@
+{
+  "version": "pkulaw-fixture-2026-10-31",
+  "searchPath": "pkulaw/",
+  "searchInput": "#txtSearch",
+  "searchSubmit": "#pkulaw-search-submit",
+  "libraryRoot": "#subLibraries",
+  "libraryAttribute": "library",
+  "pageSize": "select[name=\"pageSize\"]",
+  "filters": {
+    "year": "select[name=\"year\"]",
+    "province": "select[name=\"province\"]",
+    "timeliness": "select[name=\"timeliness\"]"
+  },
+  "filterSubmit": "#pkulaw-filter-submit",
+  "resultsRoot": "#pkulaw-results",
+  "resultLink": ".col .t h4 a[href*=\".html\"]",
+  "resultCount": ".filtrater-box .total strong",
+  "pagination": "nav.pagination, ul.pagination",
+  "batchButton": ".list-tool-wrap a.down-all",
+  "batchDialog": "[name=\"bathDownloadContainer\"], .layer-down-content",
+  "batchFormat": "input[name=\"batchDownload\"]",
+  "batchConfirm": "#batchDownload",
+  "batchCatalogFormatInput": "#catalog-format",
+  "batchCheckbox": "input[type=\"checkbox\"][name=\"recordList\"]",
+  "batchSort": "[name=\"sortNum\"]",
+  "detailTitle": ".fulltext-wrap .title",
+  "detailBody": ".fulltext-wrap .content",
+  "detailFields": ".fields li",
+  "downloadWord": "li.singleDownload[filetype=\"fullWord\"]",
+  "captcha": ".drag_text, #captcha-overlay",
+  "login": "#fixture-login",
+  "emptyMarkers": [
+    "抱歉，未找到相关结果",
+    "没有找到相关结果",
+    "未找到符合条件的法规",
+    "暂无相关结果"
+  ]
+}
