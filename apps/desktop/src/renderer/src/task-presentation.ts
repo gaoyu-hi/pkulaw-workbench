@@ -563,6 +563,148 @@ export function isHardStopCode(code: string): boolean {
   );
 }
 
+export interface TaskFailureView {
+  code: string;
+  title: string;
+  summary: string;
+  nextStep: string;
+  severity: "error" | "fatal";
+  relatedCode?: string;
+}
+
+function protocolErrorFrom(value: unknown): ProtocolError | null {
+  const record = asRecord(value);
+  const code = valueString(record, "code");
+  if (!code) return null;
+  return {
+    code,
+    message: valueString(record, "message"),
+    details: asRecord(record.details)
+  };
+}
+
+function availableYears(error: ProtocolError): string[] {
+  const raw = asRecord(error.details).available;
+  return Array.isArray(raw)
+    ? raw.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+}
+
+function yearFailureView(
+  error: ProtocolError,
+  relatedCode?: string
+): TaskFailureView {
+  const details = asRecord(error.details);
+  const expected = valueString(details, "expected");
+  const actual = valueString(details, "actual");
+  const years = availableYears(error);
+  const numericYears = years
+    .filter((year) => /^\d{4}$/.test(year))
+    .map(Number);
+  const highest = numericYears.length
+    ? String(Math.max(...numericYears))
+    : "";
+  let title = "年份筛选失败";
+  let summary = "程序没有成功应用请求的年份筛选。";
+  let nextStep = "请调整年份后重新应用任务设置，再从断点继续。";
+
+  if (expected && actual && actual !== expected) {
+    title = `未能切换到 ${expected} 年`;
+    summary =
+      `程序请求切换到 ${expected} 年，但页面仍显示 ${actual}。` +
+      "为避免扫错年份，任务已停止。";
+    nextStep =
+      `先检查年份筛选；确认页面切换到 ${expected} 年后，再从断点继续。`;
+  } else if (expected) {
+    title = "所选年份不可用";
+    summary = highest
+      ? `当前检索没有 ${expected} 年的筛选项，最高可用年份为 ${highest}。`
+      : `当前检索没有 ${expected} 年的筛选项。`;
+    nextStep = highest
+      ? `将结束年份调整到 ${highest} 或可用年份后，再应用任务设置。`
+      : "请选择当前检索实际提供的年份后，再应用任务设置。";
+  }
+
+  return {
+    code: error.code,
+    title,
+    summary,
+    nextStep,
+    severity: "error",
+    relatedCode
+  };
+}
+
+export function taskFailureView(
+  task: TaskRecord
+): TaskFailureView | null {
+  const current = task.error;
+  if (!current) return null;
+  const input = asRecord(task.input);
+  const checkpoint = asRecord(task.checkpoint);
+  const preflight = asRecord(checkpoint.collectorPreflight);
+  const nested = protocolErrorFrom(preflight.error);
+  const library = valueString(input, "library");
+  const currentDetails = asRecord(current.details);
+  const currentFilter = valueString(currentDetails, "filterKey");
+
+  if (
+    current.code === "FILTER_NOT_APPLIED" &&
+    nested?.code === "YEAR_FILTER_UNAVAILABLE"
+  ) {
+    const root = yearFailureView(nested, current.code);
+    const provinceNote =
+      library === "central" &&
+      valueString(currentDetails, "expected")
+        ? "随后又尝试了不适用于中央法规的省份筛选。"
+        : "";
+    return {
+      ...root,
+      title: "年份筛选失败，后续检索已停止",
+      summary: `${root.summary}${provinceNote}`,
+      nextStep:
+        `${root.nextStep} 中央法规不需要选择省份；如需北京市政策，请改选地方法规。`,
+      relatedCode: current.code
+    };
+  }
+
+  if (current.code === "YEAR_FILTER_UNAVAILABLE") {
+    return yearFailureView(current);
+  }
+
+  if (
+    current.code === "FILTER_NOT_APPLIED" &&
+    currentFilter === "province" &&
+    library === "central"
+  ) {
+    return {
+      code: current.code,
+      title: "中央法规不支持按省份筛选",
+      summary:
+        "当前任务是中央法规，却携带了地方省份条件，因此省份筛选无法执行。",
+      nextStep:
+        "选择“地方法规”并设置省份，或在中央法规下选择“全部省份”后重新应用设置。",
+      severity: "error"
+    };
+  }
+
+  const fallback = explainError(
+    current,
+    task.status,
+    task.currentStage,
+    task.checkpoint
+  );
+  return {
+    code: current.code,
+    title: fallback?.title || "任务已停止",
+    summary: fallback?.reason || current.message || "任务执行失败。",
+    nextStep:
+      fallback?.recommendation ||
+      "查看断点和最近事件，修复后按状态恢复。",
+    severity: fallback?.severity === "fatal" ? "fatal" : "error"
+  };
+}
+
 function matchesCode(code: string, ...prefixes: string[]): boolean {
   return prefixes.some((prefix) => code.startsWith(prefix));
 }

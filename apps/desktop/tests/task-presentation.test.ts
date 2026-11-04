@@ -15,6 +15,7 @@ import {
   retryActionLabel,
   searchSessionView,
   stageLabel,
+  taskFailureView,
   workflowSteps
 } from "../src/renderer/src/task-presentation";
 
@@ -203,6 +204,102 @@ describe("task presentation", () => {
       );
       expect(explanation?.title).toContain(expected);
       expect(explanation?.stage).toContain("检索");
+    }
+  });
+
+  it("turns filter failures into one understandable primary cause", () => {
+    const yearUnavailable = taskFailureView(
+      task({
+        status: "stopped",
+        error: {
+          code: "YEAR_FILTER_UNAVAILABLE",
+          message: "筛选操作无法执行",
+          details: {
+            filterKey: "year",
+            expected: "2026",
+            available: ["2025", "2024"]
+          }
+        }
+      })
+    );
+    const yearTransition = taskFailureView(
+      task({
+        status: "stopped",
+        error: {
+          code: "YEAR_FILTER_UNAVAILABLE",
+          message: "筛选操作无法执行",
+          details: {
+            filterKey: "year",
+            expected: "2013",
+            actual: "全部年份"
+          }
+        }
+      })
+    );
+    const centralProvince = taskFailureView(
+      task({
+        status: "stopped",
+        error: {
+          code: "FILTER_NOT_APPLIED",
+          message: "exact filter option missing",
+          details: {
+            filterKey: "province",
+            expected: "北京市"
+          }
+        }
+      })
+    );
+    const nested = taskFailureView(
+      task({
+        status: "stopped",
+        input: {
+          queries: ["残疾人体育"],
+          library: "central",
+          province: "北京市"
+        },
+        error: {
+          code: "FILTER_NOT_APPLIED",
+          message: "筛选操作无法执行",
+          details: {
+            filterKey: "province",
+            expected: "北京市"
+          }
+        },
+        checkpoint: {
+          collectorPreflight: {
+            status: "failed",
+            error: {
+              code: "YEAR_FILTER_UNAVAILABLE",
+              message: "当前页面没有可用的公布年份筛选：2026",
+              details: {
+                filterKey: "year",
+                expected: "2026",
+                available: ["2025", "2024"]
+              }
+            }
+          }
+        }
+      })
+    );
+
+    expect(yearUnavailable?.title).toBe("所选年份不可用");
+    expect(yearUnavailable?.summary).toContain("2026");
+    expect(yearUnavailable?.summary).toContain("2025");
+    expect(yearTransition?.title).toBe("未能切换到 2013 年");
+    expect(yearTransition?.summary).toContain("全部年份");
+    expect(centralProvince?.title).toBe("中央法规不支持按省份筛选");
+    expect(nested?.title).toBe("年份筛选失败，后续检索已停止");
+    expect(nested?.summary).toContain("2026");
+    expect(nested?.relatedCode).toBe("FILTER_NOT_APPLIED");
+    for (const view of [
+      yearUnavailable,
+      yearTransition,
+      centralProvince,
+      nested
+    ]) {
+      expect(view?.summary).not.toContain("{'ok': False");
+      expect(view?.summary).not.toContain("exact filter option missing");
+      expect(view?.nextStep).toBeTruthy();
     }
   });
 

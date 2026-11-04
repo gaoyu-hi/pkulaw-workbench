@@ -2,9 +2,11 @@ export interface TaskPauseDetail {
   code: string;
   title: string;
   message: string;
+  summary?: string;
   stage: string;
   checkpoint: string;
   recommendation: string;
+  nextStep?: string;
   raw: Record<string, unknown>;
 }
 
@@ -46,16 +48,16 @@ export default function TaskPauseDetailDialog({
             <dd>{detail.stage || "未记录"}</dd>
           </div>
           <div>
-            <dt>完整原因</dt>
-            <dd>{detail.message || "未记录"}</dd>
+            <dt>原因摘要</dt>
+            <dd>{detail.summary || detail.message || "未记录"}</dd>
           </div>
           <div>
             <dt>当前组合与断点</dt>
             <dd>{detail.checkpoint || "未记录"}</dd>
           </div>
           <div>
-            <dt>建议动作</dt>
-            <dd>{detail.recommendation || "未记录"}</dd>
+            <dt>下一步</dt>
+            <dd>{detail.nextStep || detail.recommendation || "未记录"}</dd>
           </div>
         </dl>
         <div className="task-pause-detail-raw">

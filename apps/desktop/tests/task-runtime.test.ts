@@ -226,10 +226,12 @@ describe("task runtime components", () => {
         detail: {
           code: "YEAR_FILTER_UNAVAILABLE",
           title: "年份筛选不可用",
-          message: "当前检索没有可用年份",
+          message: "底层错误：currentYear=2013 actualYear=全部年份",
+          summary: "程序没有成功切换到 2013 年，页面仍显示全部年份。",
           stage: "应用筛选",
           checkpoint: "查询 碳中和 · 第 2 页",
-          recommendation: "请调整年份范围后重新应用任务设置",
+          recommendation: "底层恢复建议",
+          nextStep: "请检查年份筛选，再从 2013 年断点继续。",
           raw: {
             error: {
               code: "YEAR_FILTER_UNAVAILABLE",
@@ -247,9 +249,11 @@ describe("task runtime components", () => {
 
     expect(html).toContain('role="dialog"');
     expect(html).toContain("YEAR_FILTER_UNAVAILABLE");
-    expect(html).toContain("当前检索没有可用年份");
+    expect(html).toContain(
+      "程序没有成功切换到 2013 年，页面仍显示全部年份。"
+    );
     expect(html).toContain("查询 碳中和 · 第 2 页");
-    expect(html).toContain("请调整年份范围后重新应用任务设置");
+    expect(html).toContain("请检查年份筛选，再从 2013 年断点继续。");
     expect(html).toContain("availableYears");
     expect(html).toContain("关闭详情");
   });
