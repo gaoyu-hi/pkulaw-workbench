@@ -17,6 +17,7 @@ from pkulaw_engine.sources.search_transaction import (
     SearchRequestIdentity,
     SearchSession,
 )
+from pkulaw_engine.sources.pkulaw import YearFilterUnavailable
 from pkulaw_engine.storage import TaskStore, ValidationError
 
 
@@ -222,6 +223,50 @@ class CollectorPreviewTests(unittest.TestCase):
         self.assertEqual(
             [call["province"] for call in adapter.calls],
             ["全部省份", "北京市"],
+        )
+
+    def test_preview_preserves_structured_filter_details(self) -> None:
+        class UnavailableYearAdapter(FakePreviewAdapter):
+            def search(self, **kwargs: object) -> dict[str, object]:
+                raise YearFilterUnavailable(
+                    "发表年份选择未确认",
+                    details={
+                        "filterKey": "year",
+                        "expected": "2013",
+                        "actual": "全部年份",
+                    },
+                )
+
+        service = CollectorPreviewService(
+            self.bridge,
+            self.logger,
+            adapter_factory=lambda _bridge, _logger: UnavailableYearAdapter(),
+        )
+
+        with self.assertRaises(ValidationError) as context:
+            service.preview(
+                "single",
+                {
+                    "queries": ["残疾人体育"],
+                    "matchMode": "keyword",
+                    "library": "local",
+                    "yearSelection": {
+                        "mode": "range",
+                        "startYear": 2012,
+                        "endYear": 2013,
+                    },
+                    "province": "北京市",
+                    "pageSize": 10,
+                },
+            )
+
+        self.assertEqual(
+            context.exception.details,
+            {
+                "filterKey": "year",
+                "expected": "2013",
+                "actual": "全部年份",
+            },
         )
 
     def test_batch_rejects_single_exact_title_semantics(self) -> None:

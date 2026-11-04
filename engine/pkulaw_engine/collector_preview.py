@@ -241,6 +241,9 @@ class CollectorPreviewService:
                                 "YEAR_WINDOW_DISCOVERY_FAILED",
                             ),
                             str(exc),
+                            details=dict(
+                                getattr(exc, "details", {}) or {}
+                            ),
                         ) from exc
                     raw_session = state.get("searchSession")
                     session = (
@@ -266,6 +269,9 @@ class CollectorPreviewService:
                         raise ValidationError(
                             getattr(exc, "code", "YEAR_FILTER_UNAVAILABLE"),
                             str(exc),
+                            details=dict(
+                                getattr(exc, "details", {}) or {}
+                            ),
                         ) from exc
                     values = [
                         str(entry.get("value") or "").strip()
@@ -352,6 +358,9 @@ class CollectorPreviewService:
                 raise ValidationError(
                     getattr(exc, "code", "PREVIEW_SEARCH_FAILED"),
                     str(exc),
+                    details=dict(
+                        getattr(exc, "details", {}) or {}
+                    ),
                 ) from exc
 
             raw_session = state.get("searchSession")
