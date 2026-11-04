@@ -25,6 +25,7 @@ from .sources.pkulaw import (
     SearchLibraryMismatch,
     SourceAccessError,
 )
+from .sources.library_scope import province_for_library
 from .sources.search_transaction import (
     SearchRequestIdentity,
     SearchSession,
@@ -45,6 +46,9 @@ class PreviewConfig:
     province: str
     timeliness: str
     page_size: int
+
+    def province_for(self, library: str) -> str:
+        return province_for_library(library, self.province)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -199,7 +203,7 @@ class CollectorPreviewService:
                         match_mode=config.match_mode,
                         library=library,
                         year=ALL_YEARS_LABEL,
-                        province=config.province,
+                        province=config.province_for(library),
                         timeliness=config.timeliness,
                         requested_page_size=config.page_size,
                     )
@@ -307,7 +311,7 @@ class CollectorPreviewService:
                 match_mode=config.match_mode,
                 library=combination.library,
                 year=combination.year,
-                province=config.province,
+                province=config.province_for(combination.library),
                 timeliness=config.timeliness,
                 requested_page_size=config.page_size,
             )

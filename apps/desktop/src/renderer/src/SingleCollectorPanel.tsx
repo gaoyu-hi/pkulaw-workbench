@@ -45,6 +45,10 @@ import {
   defaultCollectorMatchMode
 } from "./collector-workflow";
 import {
+  effectiveProvince,
+  showsProvinceControl
+} from "./collector-library-policy";
+import {
   collectorSearchModeOptions,
   migrateCollectorQueryDraft,
   normalizeCollectorMatchMode,
@@ -388,7 +392,7 @@ export default function SingleCollectorPanel({
       matchMode,
       library,
       ...yearSelectionPayload(yearSelection),
-      province,
+      province: effectiveProvince(library, province),
       timeliness,
       pageSize,
       ...pageSelectionPayload(pageSelection)
@@ -455,7 +459,7 @@ export default function SingleCollectorPanel({
           matchMode,
           library,
           ...yearSelectionPayload(yearSelection),
-          province,
+          province: effectiveProvince(library, province),
           timeliness,
           pageSize,
           ...pageSelectionPayload(pageSelection),
@@ -699,17 +703,22 @@ export default function SingleCollectorPanel({
               onChange={setYearSelection}
             />
         </div>
-        <div className="collector-province-row">
-          <label>
-            省份
-            <select value={province} onChange={(event) => setProvince(event.target.value)}>
-              <option>全部省份</option>
-              {PROVINCES.map((value) => (
-                <option key={value}>{value}</option>
-              ))}
-            </select>
-          </label>
-        </div>
+        {showsProvinceControl(library) && (
+          <div
+            className="collector-province-row"
+            data-testid="collector-province-row"
+          >
+            <label>
+              省份
+              <select value={province} onChange={(event) => setProvince(event.target.value)}>
+                <option>全部省份</option>
+                {PROVINCES.map((value) => (
+                  <option key={value}>{value}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
         <div className="form-columns">
           <label>
             时效性

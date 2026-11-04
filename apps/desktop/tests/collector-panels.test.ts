@@ -4,6 +4,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import BatchCollectorPanel from "../src/renderer/src/BatchCollectorPanel";
 import SingleCollectorPanel from "../src/renderer/src/SingleCollectorPanel";
 import YearRangeControl from "../src/renderer/src/YearRangeControl";
+import {
+  effectiveProvince,
+  showsProvinceControl
+} from "../src/renderer/src/collector-library-policy";
 import type { BackendState } from "../src/shared/protocol";
 
 const backend: BackendState = {
@@ -40,6 +44,69 @@ describe("collector panel copy and entry gates", () => {
       }
     });
   }
+
+  it("derives province behavior from the selected regulation library", () => {
+    expect(showsProvinceControl("central")).toBe(false);
+    expect(showsProvinceControl("local")).toBe(true);
+    expect(showsProvinceControl("both")).toBe(true);
+    expect(effectiveProvince("central", "北京市")).toBe("全部省份");
+    expect(effectiveProvince("local", "北京市")).toBe("北京市");
+    expect(effectiveProvince("both", "北京市")).toBe("北京市");
+  });
+
+  it("hides the province selector for central laws only", () => {
+    useMemoryStorage({
+      "pkulaw.collector.single.v1.library": "central",
+      "pkulaw.collector.batch.v1.library": "central"
+    });
+    const centralSingle = renderToStaticMarkup(
+      React.createElement(SingleCollectorPanel, {
+        appInfo: null,
+        backend,
+        onOpenBrowser: () => undefined
+      })
+    );
+    const centralBatch = renderToStaticMarkup(
+      React.createElement(BatchCollectorPanel, {
+        appInfo: null,
+        backend,
+        onOpenBrowser: () => undefined
+      })
+    );
+
+    expect(centralSingle).not.toContain(
+      'data-testid="collector-province-row"'
+    );
+    expect(centralBatch).not.toContain(
+      'data-testid="collector-province-row"'
+    );
+
+    useMemoryStorage({
+      "pkulaw.collector.single.v1.library": "local",
+      "pkulaw.collector.batch.v1.library": "both"
+    });
+    const localSingle = renderToStaticMarkup(
+      React.createElement(SingleCollectorPanel, {
+        appInfo: null,
+        backend,
+        onOpenBrowser: () => undefined
+      })
+    );
+    const bothBatch = renderToStaticMarkup(
+      React.createElement(BatchCollectorPanel, {
+        appInfo: null,
+        backend,
+        onOpenBrowser: () => undefined
+      })
+    );
+
+    expect(localSingle).toContain(
+      'data-testid="collector-province-row"'
+    );
+    expect(bothBatch).toContain(
+      'data-testid="collector-province-row"'
+    );
+  });
 
   it("starts fresh production collectors with empty query fields", () => {
     const single = renderToStaticMarkup(
@@ -238,6 +305,10 @@ describe("collector panel copy and entry gates", () => {
   });
 
   it("keeps single and batch primary actions in a fixed form footer", () => {
+    useMemoryStorage({
+      "pkulaw.collector.single.v1.library": "both",
+      "pkulaw.collector.batch.v1.library": "both"
+    });
     const single = renderToStaticMarkup(
       React.createElement(SingleCollectorPanel, {
         appInfo: null,
@@ -263,7 +334,7 @@ describe("collector panel copy and entry gates", () => {
 
       expect(markup).toContain("collector-form-shell");
       expect(markup).toContain("collector-year-row");
-      expect(markup).toContain("collector-province-row");
+      expect(markup).toContain('data-testid="collector-province-row"');
       expect(bodyIndex).toBeGreaterThan(-1);
       expect(footerIndex).toBeGreaterThan(bodyIndex);
       expect(actionIndex).toBeGreaterThan(footerIndex);

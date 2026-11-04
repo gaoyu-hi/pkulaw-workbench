@@ -193,6 +193,37 @@ class CollectorPreviewTests(unittest.TestCase):
         )
         self.bridge.create_download_intent.assert_not_called()
 
+    def test_both_libraries_apply_province_only_to_local_scope(self) -> None:
+        adapter = FakePreviewAdapter()
+        service = CollectorPreviewService(
+            self.bridge,
+            self.logger,
+            adapter_factory=lambda _bridge, _logger: adapter,
+        )
+
+        result = service.preview(
+            "single",
+            {
+                "queries": ["残疾人体育"],
+                "matchMode": "keyword",
+                "library": "both",
+                "yearSelection": {"mode": "all"},
+                "province": "北京市",
+                "timeliness": "全部（仅记录元数据，不筛选）",
+                "pageSize": 20,
+            },
+        )
+
+        self.assertEqual(result["downloadsStarted"], 0)
+        self.assertEqual(
+            [call["library"] for call in adapter.calls],
+            ["central", "local"],
+        )
+        self.assertEqual(
+            [call["province"] for call in adapter.calls],
+            ["全部省份", "北京市"],
+        )
+
     def test_batch_rejects_single_exact_title_semantics(self) -> None:
         with self.assertRaises(ValidationError) as context:
             parse_preview_config(

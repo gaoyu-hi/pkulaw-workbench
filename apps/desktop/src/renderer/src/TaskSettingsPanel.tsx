@@ -20,6 +20,10 @@ import {
   normalizeCollectorMatchMode,
   searchModeDisplayLabel
 } from "./collector-search-mode";
+import {
+  effectiveProvince,
+  showsProvinceControl
+} from "./collector-library-policy";
 import { usePersistentState } from "./usePersistentState";
 
 const PROVINCES = [
@@ -139,7 +143,7 @@ export function buildTaskSettingsInput(
     matchMode: normalizeCollectorMatchMode(mode, draft.matchMode),
     library: draft.library,
     ...yearSelectionPayload(draft.yearSelection),
-    province: draft.province,
+    province: effectiveProvince(draft.library, draft.province),
     timeliness: draft.timeliness,
     pageSize: draft.pageSize,
     ...pageSelectionPayload(draft.pageSelection),
@@ -293,18 +297,23 @@ export default function TaskSettingsPanel({
           />
         </div>
 
-        <div className="collector-province-row">
-          <label>
-            省份
-            <select
-              value={draft.province}
-              onChange={(event) => update("province", event.target.value)}
-            >
-              <option>全部省份</option>
-              {PROVINCES.map((value) => <option key={value}>{value}</option>)}
-            </select>
-          </label>
-        </div>
+        {showsProvinceControl(draft.library) && (
+          <div
+            className="collector-province-row"
+            data-testid="collector-province-row"
+          >
+            <label>
+              省份
+              <select
+                value={draft.province}
+                onChange={(event) => update("province", event.target.value)}
+              >
+                <option>全部省份</option>
+                {PROVINCES.map((value) => <option key={value}>{value}</option>)}
+              </select>
+            </label>
+          </div>
+        )}
 
         <label>
           时效性

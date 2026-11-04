@@ -91,6 +91,7 @@ from .selections.pagination import (
     should_pause_for_page_limit,
 )
 from .storage import TaskStore, ValidationError
+from .sources.library_scope import province_for_library
 from .manual_recovery import ACCESS_WAIT_CODES
 from .validators.archive import ArchiveValidationError, validate_zip
 from .validators.catalog import CatalogValidationError, validate_catalog
@@ -113,6 +114,9 @@ class BatchTaskConfig:
     output_dir: Path
     catalog_format: str
     full_format: str
+
+    def province_for(self, library: str) -> str:
+        return province_for_library(library, self.province)
 
 
 class BatchTaskManager:
@@ -843,7 +847,7 @@ class BatchTaskManager:
                         if selected_rows
                         else ""
                     )
-                    or config.province
+                    or config.province_for(str(batch["library"]))
                 )
                 batch_timeliness = str(
                     batch.get("searchedTimeliness")
@@ -1187,7 +1191,7 @@ class BatchTaskManager:
             match_mode=config.match_mode,
             library=library,
             year=year,
-            province=province or config.province,
+            province=province or config.province_for(library),
             timeliness=timeliness or config.timeliness,
             requested_page_size=config.page_size,
         )
@@ -1354,7 +1358,7 @@ class BatchTaskManager:
                     "query": query,
                     "library": library,
                     "year": year,
-                    "province": combination.province or config.province,
+                    "province": combination.province or config.province_for(library),
                     "timeliness": (
                         combination.timeliness or config.timeliness
                     ),
@@ -1423,7 +1427,7 @@ class BatchTaskManager:
                                     "partitionKey": combination.partition_key,
                                     "searchedProvince": (
                                         combination.province
-                                        or config.province
+                                        or config.province_for(library)
                                     ),
                                     "searchedTimeliness": (
                                         combination.timeliness
@@ -1439,7 +1443,7 @@ class BatchTaskManager:
                         row["year"] = year
                         row["partitionKey"] = combination.partition_key
                         row["searchedProvince"] = (
-                            combination.province or config.province
+                            combination.province or config.province_for(library)
                         )
                         row["searchedTimeliness"] = (
                             combination.timeliness or config.timeliness
@@ -1474,7 +1478,7 @@ class BatchTaskManager:
                                 "partitionKey": combination.partition_key,
                                 "searchedProvince": (
                                     combination.province
-                                    or config.province
+                                    or config.province_for(library)
                                 ),
                                 "searchedTimeliness": (
                                     combination.timeliness
@@ -1608,7 +1612,7 @@ class BatchTaskManager:
                         match_mode=config.match_mode,
                         library=library,
                         year=year,
-                        province=combination.province or config.province,
+                        province=combination.province or config.province_for(library),
                         timeliness=(
                             combination.timeliness or config.timeliness
                         ),
@@ -1663,7 +1667,7 @@ class BatchTaskManager:
                 query=query,
                 library=library,
                 year=year,
-                province=combination.province or config.province,
+                province=combination.province or config.province_for(library),
                 timeliness=(
                     combination.timeliness or config.timeliness
                 ),
@@ -1714,7 +1718,7 @@ class BatchTaskManager:
                 query=query,
                 library=library,
                 year=year,
-                province=combination.province or config.province,
+                province=combination.province or config.province_for(library),
                 timeliness=(
                     combination.timeliness or config.timeliness
                 ),
@@ -1808,7 +1812,7 @@ class BatchTaskManager:
                     query=query,
                     library=library,
                     year=year,
-                    province=combination.province or config.province,
+                    province=combination.province or config.province_for(library),
                     timeliness=(
                         combination.timeliness or config.timeliness
                     ),
@@ -1820,7 +1824,7 @@ class BatchTaskManager:
                 "year": year,
                 "partitionKey": combination.partition_key,
                 "searchedProvince": (
-                    combination.province or config.province
+                    combination.province or config.province_for(library)
                 ),
                 "searchedTimeliness": (
                     combination.timeliness or config.timeliness
@@ -1870,7 +1874,7 @@ class BatchTaskManager:
                     query=query,
                     library=library,
                     year=year,
-                    province=combination.province or config.province,
+                    province=combination.province or config.province_for(library),
                     timeliness=(
                         combination.timeliness or config.timeliness
                     ),
@@ -1902,7 +1906,7 @@ class BatchTaskManager:
                                 "partitionKey": combination.partition_key,
                                 "searchedProvince": (
                                     combination.province
-                                    or config.province
+                                    or config.province_for(library)
                                 ),
                                 "searchedTimeliness": (
                                     combination.timeliness
@@ -1918,7 +1922,7 @@ class BatchTaskManager:
                     row["year"] = year
                     row["partitionKey"] = combination.partition_key
                     row["searchedProvince"] = (
-                        combination.province or config.province
+                        combination.province or config.province_for(library)
                     )
                     row["searchedTimeliness"] = (
                         combination.timeliness or config.timeliness
@@ -1958,7 +1962,7 @@ class BatchTaskManager:
                             "partitionKey": combination.partition_key,
                             "searchedProvince": (
                                 combination.province
-                                or config.province
+                                or config.province_for(library)
                             ),
                             "searchedTimeliness": (
                                 combination.timeliness
@@ -1985,7 +1989,7 @@ class BatchTaskManager:
                     "year": year,
                     "partitionKey": combination.partition_key,
                     "searchedProvince": (
-                        combination.province or config.province
+                        combination.province or config.province_for(library)
                     ),
                     "searchedTimeliness": (
                         combination.timeliness or config.timeliness
@@ -2014,7 +2018,7 @@ class BatchTaskManager:
                     "effectiveYear": year,
                     "partitionKey": combination.partition_key,
                     "selectedProvince": (
-                        combination.province or config.province
+                        combination.province or config.province_for(library)
                     ),
                     "selectedTimeliness": (
                         combination.timeliness or config.timeliness
@@ -2317,7 +2321,7 @@ class BatchTaskManager:
                     query=query,
                     library=library,
                     year=year,
-                    province=combination.province or config.province,
+                    province=combination.province or config.province_for(library),
                     timeliness=(
                         combination.timeliness or config.timeliness
                     ),
@@ -2509,6 +2513,7 @@ class BatchTaskManager:
             }
             scope_query = str(year_partition.get("query") or "")
             scope_library = str(year_partition.get("library") or "")
+            scope_province = config.province_for(scope_library)
             current_session = getattr(
                 adapter,
                 "current_search_session",
@@ -2522,7 +2527,7 @@ class BatchTaskManager:
                     or str(current_session.library or "") != scope_library
                     or str(current_session.year or "") != "全部年份"
                     or str(current_session.province or "")
-                    != str(config.province or "")
+                    != scope_province
                 )
             ):
                 state = adapter.search(
@@ -2530,7 +2535,7 @@ class BatchTaskManager:
                     match_mode=config.match_mode,
                     library=scope_library,
                     year="全部年份",
-                    province=config.province,
+                    province=scope_province,
                     timeliness=config.timeliness,
                     page_size=config.page_size,
                 )
@@ -2542,7 +2547,7 @@ class BatchTaskManager:
                     or current_session.query != scope_query
                     or current_session.library != scope_library
                     or current_session.year != "全部年份"
-                    or current_session.province != config.province
+                    or current_session.province != scope_province
                 ):
                     raise ResultWindowTruncated(
                         "无法建立批量最终年份核验所需的受控检索上下文"
@@ -2914,7 +2919,7 @@ class BatchTaskManager:
                         match_mode=config.match_mode,
                         library=library,
                         year=ALL_YEARS_LABEL,
-                        province=config.province,
+                        province=config.province_for(library),
                         timeliness=config.timeliness,
                         page_size=config.page_size,
                     ),
@@ -3158,6 +3163,7 @@ class BatchTaskManager:
             return year_partition
         scope_query = str(year_partition.get("query") or "")
         scope_library = str(year_partition.get("library") or "")
+        scope_province = config.province_for(scope_library)
         current_session = getattr(adapter, "current_search_session", None)
         if (
             hasattr(adapter, "search")
@@ -3166,7 +3172,7 @@ class BatchTaskManager:
                 or str(current_session.library or "") != scope_library
                 or str(current_session.year or "") != "全部年份"
                 or str(current_session.province or "")
-                != str(config.province or "")
+                != scope_province
             )
         ):
             state = adapter.search(
@@ -3174,7 +3180,7 @@ class BatchTaskManager:
                 match_mode=config.match_mode,
                 library=scope_library,
                 year="全部年份",
-                province=config.province,
+                province=scope_province,
                 timeliness=config.timeliness,
                 page_size=config.page_size,
             )
@@ -3184,7 +3190,7 @@ class BatchTaskManager:
                 or session.query != scope_query
                 or session.library != scope_library
                 or session.year != "全部年份"
-                or session.province != config.province
+                or session.province != scope_province
             ):
                 raise ResultWindowTruncated(
                     "无法建立批量年份窗口计划所需的受控检索上下文"
@@ -3354,7 +3360,7 @@ class BatchTaskManager:
                     if selected
                     else ""
                 )
-                or config.province
+                or config.province_for(str(batch["library"]))
             ),
             timeliness=str(
                 batch.get("searchedTimeliness")

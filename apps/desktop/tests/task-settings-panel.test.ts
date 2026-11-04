@@ -102,6 +102,46 @@ describe("TaskSettingsPanel", () => {
     expect(markup).toContain('<option value="title">精确完整标题</option>');
   });
 
+  it("hides province settings for central laws", () => {
+    const render = (library: "central" | "local" | "both"): string =>
+      renderToStaticMarkup(
+        React.createElement(TaskSettingsPanel, {
+          mode: "single",
+          taskId: `task-${library}`,
+          input: {
+            ...input,
+            library,
+            province: "北京市"
+          },
+          busy: false,
+          onApply: async () => undefined,
+          onClose: () => undefined
+        })
+      );
+
+    expect(render("central")).not.toContain(
+      'data-testid="collector-province-row"'
+    );
+    expect(render("local")).toContain(
+      'data-testid="collector-province-row"'
+    );
+    expect(render("both")).toContain(
+      'data-testid="collector-province-row"'
+    );
+  });
+
+  it("normalizes a stale central province when building settings", () => {
+    const draft = taskSettingsDraftFromInput("single", {
+      ...input,
+      library: "central",
+      province: "北京市"
+    });
+
+    expect(buildTaskSettingsInput("single", draft).province).toBe(
+      "全部省份"
+    );
+  });
+
   it("disables both actions while a revision is being applied", () => {
     const markup = renderToStaticMarkup(
       React.createElement(TaskSettingsPanel, {
@@ -119,11 +159,16 @@ describe("TaskSettingsPanel", () => {
   });
 
   it("keeps apply settings in a fixed footer after the form body", () => {
+    const localInput = {
+      ...input,
+      library: "local",
+      province: "北京市"
+    };
     const markup = renderToStaticMarkup(
       React.createElement(TaskSettingsPanel, {
         mode: "single",
         taskId: "task-layout",
-        input,
+        input: localInput,
         busy: false,
         onApply: async () => undefined,
         onClose: () => undefined
@@ -135,7 +180,7 @@ describe("TaskSettingsPanel", () => {
 
     expect(markup).toContain("collector-form-shell");
     expect(markup).toContain("collector-year-row");
-    expect(markup).toContain("collector-province-row");
+    expect(markup).toContain('data-testid="collector-province-row"');
     expect(bodyIndex).toBeGreaterThan(-1);
     expect(footerIndex).toBeGreaterThan(bodyIndex);
     expect(applyIndex).toBeGreaterThan(footerIndex);
