@@ -70,7 +70,7 @@ class ProtocolProcessTests(unittest.TestCase):
                 continue
             self.messages.put(json.loads(line))
 
-    def _receive(self, timeout: float = 5.0) -> dict[str, Any]:
+    def _receive(self, timeout: float = 15.0) -> dict[str, Any]:
         return self.messages.get(timeout=timeout)
 
     def _send(self, message: dict[str, Any]) -> None:

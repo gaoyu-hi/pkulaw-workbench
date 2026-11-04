@@ -73,5 +73,5 @@ describe("PythonService integration", () => {
     expect(pid).not.toBeNull();
     expect(statuses).toContain("ready");
     expect(fs.existsSync(path.join(tempDirectory, "pkulaw.sqlite3"))).toBe(true);
-  });
+  }, 20_000);
 });

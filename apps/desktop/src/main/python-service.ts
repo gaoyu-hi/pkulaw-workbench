@@ -128,7 +128,7 @@ export class PythonService extends EventEmitter {
       const timer = setTimeout(() => {
         this.readyWaiter = null;
         reject(new Error("Python backend handshake timed out"));
-      }, bundled ? 20_000 : 10_000);
+      }, bundled ? 20_000 : 30_000);
       this.readyWaiter = { resolve, reject, timer };
     });
 
