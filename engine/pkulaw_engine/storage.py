@@ -92,9 +92,16 @@ def _parse_timestamp(value: str) -> datetime | None:
 
 
 class ValidationError(ValueError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.details = dict(details or {})
 
 
 class TaskStore:

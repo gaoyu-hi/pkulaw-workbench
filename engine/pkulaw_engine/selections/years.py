@@ -133,12 +133,21 @@ def effective_year_window(
         raise ValidationError(
             "YEAR_FILTER_UNAVAILABLE",
             "当前检索没有可用的真实年份选项",
+            details={
+                "available": [],
+            },
         )
     if selection.mode == "single":
         if selection.year not in available_years:
             raise ValidationError(
                 "YEAR_FILTER_UNAVAILABLE",
                 f"当前检索不包含指定年份：{selection.year}",
+                details={
+                    "expected": str(selection.year),
+                    "available": [
+                        str(year) for year in available_years
+                    ],
+                },
             )
         effective_selection = selection
     else:
@@ -152,6 +161,14 @@ def effective_year_window(
             raise ValidationError(
                 "YEAR_RANGE_UNAVAILABLE",
                 "请求年份区间与当前检索可用年份没有交集",
+                details={
+                    "expected": selection.to_payload()[
+                        "yearSelection"
+                    ],
+                    "available": [
+                        str(year) for year in available_years
+                    ],
+                },
             )
         effective_selection = YearSelection(
             mode="range",

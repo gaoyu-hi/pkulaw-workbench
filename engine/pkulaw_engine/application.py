@@ -204,9 +204,15 @@ class EngineApplication:
             )
             follow_up = []
         except ValidationError as exc:
+            error = {
+                "code": exc.code,
+                "message": str(exc),
+            }
+            if exc.details:
+                error["details"] = dict(exc.details)
             response = response_message(
                 request_id,
-                error={"code": exc.code, "message": str(exc)},
+                error=error,
             )
             follow_up = []
         except Exception as exc:
@@ -976,7 +982,12 @@ class EngineApplication:
             lease_id = str(lease.get("leaseId") or "")
             if lease.get("acquired"):
                 self.browser_lease.release(lease["leaseId"])
-            error = {"code": exc.code, "message": str(exc)}
+            error = {
+                "code": exc.code,
+                "message": str(exc),
+            }
+            if exc.details:
+                error["details"] = dict(exc.details)
             checkpoint = dict(task.get("checkpoint") or {})
             checkpoint["collectorPreflight"] = {
                 "status": "failed",

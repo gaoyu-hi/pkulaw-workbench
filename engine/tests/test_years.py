@@ -141,6 +141,13 @@ class YearSelectionTests(unittest.TestCase):
             single_context.exception.code,
             "YEAR_FILTER_UNAVAILABLE",
         )
+        self.assertEqual(
+            single_context.exception.details,
+            {
+                "expected": "1999",
+                "available": ["2022", "2023"],
+            },
+        )
 
     def test_year_window_ignores_invalid_values_and_caps_current_year(self) -> None:
         current = date.today().year
