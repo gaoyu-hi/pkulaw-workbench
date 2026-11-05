@@ -13,6 +13,7 @@
     "test:phase-a-baseline": "node scripts/phase-a-baseline.mjs",
     "smoke": "pnpm --dir apps/desktop smoke",
     "build:portable": "node scripts/build-portable.mjs",
+    "build:mac": "node scripts/build-macos-arm64.mjs",
     "package:source": "node scripts/package-source.mjs",
     "verify:portable": "node scripts/verify-portable.mjs"
   }

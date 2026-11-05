@@ -6,6 +6,12 @@ import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 
+if (process.platform !== "win32") {
+  throw new Error(
+    `WINDOWS_PORTABLE_BUILD_REQUIRED: received ${process.platform}/${process.arch}`
+  );
+}
+
 const root = path.resolve(import.meta.dirname, "..");
 const outputRoot = path.resolve(root, "..", "..", "outputs");
 const cleanRoomRoot = path.join(root, "clean-room");

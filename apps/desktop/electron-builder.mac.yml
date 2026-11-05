@@ -1,0 +1,30 @@
+appId: cn.pkulaw.workbench
+productName: 法宝工作台
+artifactName: PkulawWorkbench-${version}-macOS-${arch}.${ext}
+
+directories:
+  output: ../../release/macos
+
+files:
+  - out/**/*
+  - package.json
+  - node_modules/fflate/**/*
+
+extraResources:
+  - from: ../../release/macos/engine
+    to: engine
+  - from: ../../deployment
+    to: deployment
+
+mac:
+  category: public.app-category.productivity
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  target:
+    - target: dmg
+      arch:
+        - arm64
+
+dmg:
+  title: 法宝工作台 ${version}

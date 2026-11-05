@@ -3,6 +3,7 @@ packages:
 allowBuilds:
   '@swc/core': true
   electron: true
+  electron-winstaller: false
 minimumReleaseAgeExclude:
   - '@swc/core-darwin-arm64@1.16.21'
   - '@swc/core-darwin-x64@1.16.21'
