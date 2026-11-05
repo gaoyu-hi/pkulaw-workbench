@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
@@ -6,41 +7,10 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 engine_root = Path(SPECPATH).resolve()
 project_root = engine_root.parent
 
-datas = [
-    (
-        str(engine_root / "pkulaw_engine" / "sources" / "selectors.json"),
-        "pkulaw_engine/sources",
-    ),
-    (
-        str(engine_root / "pkulaw_engine" / "sources" / "profiles"),
-        "pkulaw_engine/sources/profiles",
-    ),
-    (
-        str(engine_root / "vendor" / "antiword" / "win-x64"),
-        "vendor/antiword/win-x64",
-    ),
-    (
-        str(engine_root / "vendor" / "antiword" / "SOURCE.md"),
-        "vendor/antiword",
-    ),
-    (
-        str(engine_root / "vendor" / "antiword" / "MANIFEST.json"),
-        "vendor/antiword",
-    ),
-    (
-        str(engine_root / "vendor" / "antiword" / "antiword-0.37.tar.gz"),
-        "vendor/antiword",
-    ),
-    (
-        str(
-            engine_root
-            / "vendor"
-            / "antiword"
-            / "0001-Make-antiword.exe-relocatable-on-Windows.patch"
-        ),
-        "vendor/antiword",
-    ),
-]
+sys.path.insert(0, str(engine_root))
+from pkulaw_engine.build_support import engine_data_entries
+
+datas = engine_data_entries(engine_root, sys.platform)
 for package in ("DrissionPage", "docx", "openpyxl", "xlrd"):
     datas += collect_data_files(package)
 
