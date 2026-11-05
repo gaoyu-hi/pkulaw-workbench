@@ -31,7 +31,7 @@ export class TrashCleanupError extends Error {
     missingPaths: string[]
   ) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    super(`无法将登记文件移入 Windows 回收站：${failedPath} (${message})`);
+    super(`无法将登记文件移入系统回收站：${failedPath} (${message})`);
     this.name = "TrashCleanupError";
     this.details = {
       failedPath,

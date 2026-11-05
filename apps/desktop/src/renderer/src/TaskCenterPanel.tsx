@@ -526,7 +526,7 @@ export default function TaskCenterPanel({
       await refreshTasks();
       setNotice(
         fileMode === "trash"
-          ? `已删除 ${result.taskIds.length} 个任务记录，${result.trashedFiles} 个登记文件已移入 Windows 回收站。`
+          ? `已删除 ${result.taskIds.length} 个任务记录，${result.trashedFiles} 个登记文件已移入 ${appInfo?.trashLabel || "系统回收站"}。`
           : `已删除 ${result.taskIds.length} 个任务记录，输出文件保留。`
       );
     } catch (error) {
@@ -789,7 +789,10 @@ export default function TaskCenterPanel({
                         ? ` · ${selectedTask.archiveReason}`
                         : ""}
                     </span>
-                    <small>恢复不会重新采集；彻底删除前可选择保留文件或移入 Windows 回收站。</small>
+                    <small>
+                      恢复不会重新采集；彻底删除前可选择保留文件或移入
+                      {appInfo?.trashLabel || "系统回收站"}。
+                    </small>
                   </div>
                 )}
               </article>
@@ -1000,7 +1003,7 @@ export default function TaskCenterPanel({
                 disabled={busy}
                 onClick={() => void confirmPurge("trash")}
               >
-                移入 Windows 回收站并删除记录
+                移入 {appInfo?.trashLabel || "系统回收站"}并删除记录
               </button>
             </div>
           </section>

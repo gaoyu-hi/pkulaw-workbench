@@ -2,7 +2,8 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { JsonLineLogger } from "../src/main/logger";
 import { PythonService } from "../src/main/python-service";
 
@@ -74,4 +75,37 @@ describe("PythonService integration", () => {
     expect(statuses).toContain("ready");
     expect(fs.existsSync(path.join(tempDirectory, "pkulaw.sqlite3"))).toBe(true);
   }, 20_000);
+
+  it("uses the configured force signal after graceful shutdown times out", async () => {
+    tempDirectory = await fsp.mkdtemp(path.join(os.tmpdir(), "pkulaw-service-"));
+    const logger = new JsonLineLogger(path.join(tempDirectory, "logs", "desktop.jsonl"));
+    service = new PythonService({
+      engineDirectory: ENGINE_DIRECTORY,
+      pythonPath: PYTHON_PATH,
+      dataDirectory: tempDirectory,
+      appVersion: "0.1.0-test",
+      forceKillSignal: "SIGKILL",
+      logger
+    });
+    const signals: Array<NodeJS.Signals | undefined> = [];
+    const child = new EventEmitter() as EventEmitter & {
+      exitCode: number | null;
+      kill: (signal?: NodeJS.Signals) => boolean;
+      stdin: { destroyed: boolean };
+    };
+    child.exitCode = null;
+    child.stdin = { destroyed: false };
+    child.kill = vi.fn((signal?: NodeJS.Signals) => {
+      signals.push(signal);
+      queueMicrotask(() => child.emit("exit", null, signal));
+      return true;
+    });
+    Object.assign(service as unknown as Record<string, unknown>, {
+      child
+    });
+
+    await service.stop();
+
+    expect(signals).toEqual(["SIGKILL"]);
+  }, 5_000);
 });

@@ -138,6 +138,29 @@ describe("task file cleanup", () => {
     expect(called).toBe(false);
   });
 
+  it("reports a platform-neutral system trash failure", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "pkulaw-cleanup-"));
+    temporaryDirectories.push(directory);
+    const target = path.join(directory, "inside.txt");
+    await writeFile(target, "ok", "utf8");
+
+    let failure: unknown;
+    try {
+      await trashRegisteredFiles(preview([cleanupFile(target)]), {
+        protectedRoots: [directory],
+        trashItem: async () => {
+          throw new Error("file is in use");
+        }
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(TrashCleanupError);
+    expect((failure as Error).message).toContain("系统回收站");
+    expect((failure as Error).message).not.toContain("Windows 回收站");
+  });
+
   it("handles a long Chinese and spaced path without touching the directory", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "pkulaw-cleanup-"));
     temporaryDirectories.push(directory);

@@ -430,6 +430,8 @@ export interface BackendState {
 export interface AppInfo {
   name: string;
   version: string;
+  platform: "win32" | "darwin";
+  trashLabel: string;
   dataDirectory: string;
   logsDirectory: string;
   resourcesPath: string;

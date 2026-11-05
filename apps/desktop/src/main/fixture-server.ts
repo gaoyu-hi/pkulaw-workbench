@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import { strToU8, zipSync } from "fflate";
+import { resolveDesktopPlatform } from "./platform";
 
 const V6_FIXTURE_FILES = new Set([
   "batch-modal-real-shape.html",
@@ -971,7 +972,10 @@ sys.stdout.buffer.write(output.getvalue())
 async function makeCatalogXls(
   policies: FixturePolicy[]
 ): Promise<Uint8Array> {
-  const pythonPath = process.env.PKULAW_PYTHON?.trim() || "python";
+  const pythonPath = resolveDesktopPlatform(
+    process.platform,
+    process.env
+  ).developmentPythonPath;
   const rows = policies.map((policy) => ({
     title: policy.title,
     url: `/pkulaw/detail/${policy.id}.html`

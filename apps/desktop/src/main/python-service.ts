@@ -16,6 +16,7 @@ interface PythonServiceOptions {
   engineDirectory: string;
   pythonPath: string;
   backendExecutable?: boolean;
+  forceKillSignal?: NodeJS.Signals;
   dataDirectory: string;
   appVersion: string;
   logger: JsonLineLogger;
@@ -198,7 +199,7 @@ export class PythonService extends EventEmitter {
       new Promise<void>((resolve) => setTimeout(resolve, 1_500))
     ]);
     if (this.child && this.child.exitCode === null) {
-      this.child.kill();
+      this.child.kill(this.options.forceKillSignal || "SIGTERM");
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, 1_500);
         this.child?.once("exit", () => {

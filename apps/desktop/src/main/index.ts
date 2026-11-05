@@ -34,7 +34,12 @@ import { registerIpcHandlers } from "./ipc";
 import { JsonLineLogger } from "./logger";
 import { EngineRequestError, PythonService } from "./python-service";
 import { ensureWritableDirectory } from "./path-safety";
+import {
+  isBundledEngineConfig,
+  resolveDesktopPlatform
+} from "./platform";
 
+const desktopPlatform = resolveDesktopPlatform(process.platform, process.env);
 let mainWindow: BrowserWindow | null = null;
 let pythonService: PythonService | null = null;
 let browserHost: BrowserHost | null = null;
@@ -99,7 +104,10 @@ async function stageBundledEngine(
     "pkulaw-workbench-engine",
     sourceIdentity
   );
-  const stagedExecutable = path.join(stagingRoot, "pkulaw-engine.exe");
+  const stagedExecutable = path.join(
+    stagingRoot,
+    desktopPlatform.backendExecutableName
+  );
   if (fs.existsSync(stagedExecutable)) {
     return stagingRoot;
   }
@@ -113,10 +121,12 @@ async function stageBundledEngine(
   });
   const temporaryExecutable = path.join(
     temporaryRoot,
-    "pkulaw-engine.exe"
+    desktopPlatform.backendExecutableName
   );
   if (!fs.existsSync(temporaryExecutable)) {
-    throw new Error("Bundled Python engine staging did not produce pkulaw-engine.exe");
+    throw new Error(
+      `Bundled Python engine staging did not produce ${desktopPlatform.backendExecutableName}`
+    );
   }
   await fsp.rm(stagingRoot, { recursive: true, force: true });
   await fsp.rename(temporaryRoot, stagingRoot);
@@ -132,10 +142,10 @@ async function resolveBackendLaunch(): Promise<{
   const bundledExecutable = path.join(
     process.resourcesPath,
     "engine",
-    "pkulaw-engine.exe"
+    desktopPlatform.backendExecutableName
   );
   if (configured) {
-    const bundled = path.basename(configured).toLowerCase() === "pkulaw-engine.exe";
+    const bundled = isBundledEngineConfig(process.platform, configured);
     return {
       engineDirectory: bundled
         ? path.dirname(configured)
@@ -152,13 +162,16 @@ async function resolveBackendLaunch(): Promise<{
     );
     return {
       engineDirectory,
-      pythonPath: path.join(engineDirectory, "pkulaw-engine.exe"),
+      pythonPath: path.join(
+        engineDirectory,
+        desktopPlatform.backendExecutableName
+      ),
       backendExecutable: true
     };
   }
   return {
     engineDirectory: resolveEngineDirectory(),
-    pythonPath: "D:\\Python\\python.exe",
+    pythonPath: desktopPlatform.developmentPythonPath,
     backendExecutable: false
   };
 }
@@ -5445,6 +5458,8 @@ async function bootstrap(): Promise<void> {
   const appInfo: AppInfo = {
     name: "法宝工作台",
     version: appVersion,
+    platform: desktopPlatform.platform,
+    trashLabel: desktopPlatform.trashLabel,
     dataDirectory,
     logsDirectory,
     resourcesPath: process.resourcesPath,
@@ -5468,6 +5483,7 @@ async function bootstrap(): Promise<void> {
     engineDirectory,
     pythonPath,
     backendExecutable: backendLaunch.backendExecutable,
+    forceKillSignal: desktopPlatform.forceKillSignal,
     dataDirectory,
     appVersion,
     logger
