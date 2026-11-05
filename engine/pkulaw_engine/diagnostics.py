@@ -110,6 +110,7 @@ def collect_diagnostics(
             else ""
         ),
         "antiword": shutil.which("antiword") or "",
+        "textutil": shutil.which("textutil") or "",
         "libreoffice": shutil.which("soffice") or shutil.which("libreoffice") or "",
         "microsoft-word-com": (
             "available" if _package_version("pywin32", "win32com") else "not-installed"

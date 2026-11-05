@@ -427,6 +427,167 @@ class ProcessingTests(unittest.TestCase):
         with self.assertRaises(DocumentExtractionError):
             extract_text(broken)
 
+    def test_textutil_converts_legacy_doc_and_records_provenance(
+        self,
+    ) -> None:
+        import pkulaw_engine.processors.documents as documents
+
+        sample = next(
+            (Path(__file__).with_name("fixtures") / "real-word-doc").glob("*.doc")
+        )
+        completed = subprocess.CompletedProcess(
+            args=["textutil"],
+            returncode=0,
+            stdout="这是由 macOS textutil 提取的完整政策正文内容。".encode("utf-8"),
+            stderr=b"",
+        )
+        with (
+            patch.object(documents.sys, "platform", "darwin"),
+            patch.object(
+                documents,
+                "_validate_bundled_antiword",
+                side_effect=DocumentExtractionError(
+                    "DOC_CONVERTER_UNAVAILABLE",
+                    "Windows antiword is unavailable",
+                ),
+            ),
+            patch.object(
+                documents.shutil,
+                "which",
+                side_effect=lambda name: (
+                    "/usr/bin/textutil" if name == "textutil" else None
+                ),
+            ),
+            patch.object(
+                documents.subprocess,
+                "run",
+                return_value=completed,
+            ) as run,
+        ):
+            result = documents.extract_document(
+                sample,
+                runtime_root=Path(__file__).parents[1],
+            )
+
+        self.assertEqual(result.artifact_method, "textutil")
+        self.assertEqual(result.converter_name, "textutil")
+        self.assertTrue(result.converter_version)
+        self.assertIn("macOS textutil", result.text)
+        self.assertEqual(
+            run.call_args.args[0],
+            ["/usr/bin/textutil", "-convert", "txt", "-stdout", str(sample)],
+        )
+
+    def test_textutil_timeout_fails_closed(self) -> None:
+        import pkulaw_engine.processors.documents as documents
+
+        sample = next(
+            (Path(__file__).with_name("fixtures") / "real-word-doc").glob("*.doc")
+        )
+        with (
+            patch.object(documents.sys, "platform", "darwin"),
+            patch.object(
+                documents,
+                "_validate_bundled_antiword",
+                side_effect=DocumentExtractionError(
+                    "DOC_CONVERTER_UNAVAILABLE",
+                    "Windows antiword is unavailable",
+                ),
+            ),
+            patch.object(
+                documents.shutil,
+                "which",
+                side_effect=lambda name: (
+                    "/usr/bin/textutil" if name == "textutil" else None
+                ),
+            ),
+            patch.object(
+                documents.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired(
+                    cmd="textutil",
+                    timeout=60,
+                ),
+            ),
+            patch.object(
+                documents,
+                "_run_word_com",
+                side_effect=DocumentExtractionError(
+                    "DOC_CONVERTER_UNAVAILABLE",
+                    "Word COM is unavailable",
+                ),
+            ),
+        ):
+            with self.assertRaises(DocumentExtractionError) as failure:
+                documents.extract_document(
+                    sample,
+                    runtime_root=Path(__file__).parents[1],
+                )
+
+        self.assertEqual(
+            failure.exception.code,
+            "DOC_TEXT_EXTRACTION_FAILED",
+        )
+        attempts = failure.exception.details["attempts"]
+        self.assertTrue(
+            any(item.get("method") == "textutil" for item in attempts)
+        )
+
+    def test_textutil_empty_output_fails_closed(self) -> None:
+        import pkulaw_engine.processors.documents as documents
+
+        sample = next(
+            (Path(__file__).with_name("fixtures") / "real-word-doc").glob("*.doc")
+        )
+        completed = subprocess.CompletedProcess(
+            args=["textutil"],
+            returncode=0,
+            stdout=b"",
+            stderr=b"",
+        )
+        with (
+            patch.object(documents.sys, "platform", "darwin"),
+            patch.object(
+                documents,
+                "_validate_bundled_antiword",
+                side_effect=DocumentExtractionError(
+                    "DOC_CONVERTER_UNAVAILABLE",
+                    "Windows antiword is unavailable",
+                ),
+            ),
+            patch.object(
+                documents.shutil,
+                "which",
+                side_effect=lambda name: (
+                    "/usr/bin/textutil" if name == "textutil" else None
+                ),
+            ),
+            patch.object(
+                documents.subprocess,
+                "run",
+                return_value=completed,
+            ),
+            patch.object(
+                documents,
+                "_run_word_com",
+                side_effect=DocumentExtractionError(
+                    "DOC_CONVERTER_UNAVAILABLE",
+                    "Word COM is unavailable",
+                ),
+            ),
+        ):
+            with self.assertRaises(DocumentExtractionError) as failure:
+                documents.extract_document(
+                    sample,
+                    runtime_root=Path(__file__).parents[1],
+                )
+
+        attempts = failure.exception.details["attempts"]
+        textutil = next(
+            item for item in attempts if item.get("method") == "textutil"
+        )
+        self.assertEqual(textutil["code"], "DOC_TEXT_EXTRACTION_FAILED")
+
     def test_all_real_doc_samples_extract_with_bundled_converter(self) -> None:
         from pkulaw_engine.processors.documents import extract_document
 

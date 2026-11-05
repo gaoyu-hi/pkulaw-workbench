@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -328,6 +329,40 @@ def _run_system_antiword(path: Path, executable: str) -> str:
     return text
 
 
+def _run_textutil(path: Path, executable: str) -> str:
+    try:
+        result = subprocess.run(
+            [executable, "-convert", "txt", "-stdout", str(path)],
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise DocumentExtractionError(
+            "DOC_TEXT_EXTRACTION_FAILED",
+            "macOS textutil 转换超时",
+            details={"file": str(path), "converter": "textutil"},
+        ) from exc
+    except OSError as exc:
+        raise DocumentExtractionError(
+            "DOC_TEXT_EXTRACTION_FAILED",
+            f"macOS textutil 启动失败：{exc}",
+            details={"file": str(path), "converter": "textutil"},
+        ) from exc
+    text = _decode_process_output(result.stdout)
+    if result.returncode != 0 or not text.strip():
+        raise DocumentExtractionError(
+            "DOC_TEXT_EXTRACTION_FAILED",
+            "macOS textutil 未输出有效正文",
+            details={
+                "file": str(path),
+                "returnCode": result.returncode,
+                "stderr": _decode_process_output(result.stderr)[-1000:],
+            },
+        )
+    return text
+
+
 def _run_libreoffice(path: Path, executable: str) -> str:
     with tempfile.TemporaryDirectory(prefix="pkulaw-doc-") as directory:
         result = subprocess.run(
@@ -495,6 +530,35 @@ def _extract_legacy_doc(
                     "message": str(exc),
                 }
             )
+
+    if sys.platform == "darwin":
+        textutil = shutil.which("textutil")
+        if textutil:
+            try:
+                text = _run_textutil(path, textutil)
+                return text, DocumentExtractionResult(
+                    text="",
+                    artifact_method="textutil",
+                    text_source_type="word-text",
+                    converter_name="textutil",
+                    converter_version=platform.mac_ver()[0] or "system",
+                )
+            except (
+                DocumentExtractionError,
+                subprocess.TimeoutExpired,
+                OSError,
+            ) as exc:
+                errors.append(
+                    {
+                        "method": "textutil",
+                        "code": getattr(
+                            exc,
+                            "code",
+                            "DOC_TEXT_EXTRACTION_FAILED",
+                        ),
+                        "message": str(exc),
+                    }
+                )
 
     soffice = shutil.which("soffice") or shutil.which("libreoffice")
     if soffice:
