@@ -2,9 +2,13 @@ import { spawnSync } from "node:child_process";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import {
+  pnpmCommand as resolvePnpmCommand,
+  pythonCommand
+} from "./lib/runtime-platform.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const python = process.env.PKULAW_PYTHON || "D:\\Python\\python.exe";
+const python = pythonCommand(process.platform, process.env);
 const engine = path.join(root, "engine");
 const smokeConfig = path.join(engine, ".coveragerc-smoke");
 const keyModules = [
@@ -41,7 +45,7 @@ function run(command, args, cwd = root, env = {}) {
   }
 }
 
-function pnpmCommand() {
+function pnpmRunner() {
   const runtime = process.env.npm_execpath;
   if (runtime && /\.(?:c?js|mjs)$/i.test(runtime)) {
     return {
@@ -50,7 +54,7 @@ function pnpmCommand() {
     };
   }
   return {
-    command: process.env.PNPM_EXECUTABLE || "pnpm.cmd",
+    command: resolvePnpmCommand(process.platform, process.env),
     prefix: []
   };
 }
@@ -86,7 +90,7 @@ run(
 );
 
 if (process.env.PKULAW_COVERAGE_SKIP_BUILD !== "1") {
-  const pnpm = pnpmCommand();
+  const pnpm = pnpmRunner();
   run(
     pnpm.command,
     [...pnpm.prefix, "--dir", "apps/desktop", "build"],

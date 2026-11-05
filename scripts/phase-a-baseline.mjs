@@ -2,6 +2,10 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import {
+  pnpmCommand as resolvePnpmCommand,
+  pythonCommand
+} from "./lib/runtime-platform.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const reports = path.join(root, "outputs", "0.2.1阶段A红基线");
@@ -24,12 +28,12 @@ function run(command, args, cwd, baseline = true) {
   };
 }
 
-const python = process.env.PKULAW_PYTHON || "D:\\Python\\python.exe";
+const python = pythonCommand(process.platform, process.env);
 const pnpmRuntime = process.env.npm_execpath;
 const pnpmCommand =
   pnpmRuntime && /\.(?:c?js|mjs)$/i.test(pnpmRuntime)
     ? process.execPath
-    : process.env.PNPM_EXECUTABLE || "pnpm.cmd";
+    : resolvePnpmCommand(process.platform, process.env);
 const pnpmPrefix =
   pnpmRuntime && /\.(?:c?js|mjs)$/i.test(pnpmRuntime)
     ? [pnpmRuntime]

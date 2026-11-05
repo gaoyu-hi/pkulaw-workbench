@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import process from "node:process";
+import { pythonCommand } from "../../../scripts/lib/runtime-platform.mjs";
 
 const appRoot = path.resolve(import.meta.dirname, "..");
 const workbenchRoot = path.resolve(appRoot, "../..");
@@ -52,7 +53,7 @@ const child = spawn(
       PKULAW_SMOKE_FAKE_SHELL_OPEN: mode === "stage6" ? "1" : "0",
       PKULAW_DATA_DIR: dataDirectory,
       PKULAW_ENGINE_DIR: path.join(workbenchRoot, "engine"),
-      PKULAW_PYTHON: process.env.PKULAW_PYTHON || "D:\\Python\\python.exe",
+      PKULAW_PYTHON: pythonCommand(process.platform, process.env),
       PKULAW_SMOKE_REPORT: reportPath,
       PKULAW_SMOKE_SCREENSHOT: screenshotPath
     }
