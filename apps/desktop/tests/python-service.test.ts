@@ -5,10 +5,14 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { JsonLineLogger } from "../src/main/logger";
+import { resolveDesktopPlatform } from "../src/main/platform";
 import { PythonService } from "../src/main/python-service";
 
 const ENGINE_DIRECTORY = path.resolve(import.meta.dirname, "../../../engine");
-const PYTHON_PATH = process.env.PKULAW_PYTHON || "D:\\Python\\python.exe";
+const PYTHON_PATH = resolveDesktopPlatform(
+  process.platform,
+  process.env
+).developmentPythonPath;
 
 describe("PythonService integration", () => {
   let service: PythonService | null = null;

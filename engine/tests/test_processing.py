@@ -588,6 +588,10 @@ class ProcessingTests(unittest.TestCase):
         )
         self.assertEqual(textutil["code"], "DOC_TEXT_EXTRACTION_FAILED")
 
+    @unittest.skipUnless(
+        sys.platform == "win32",
+        "bundled antiword is a Windows converter",
+    )
     def test_all_real_doc_samples_extract_with_bundled_converter(self) -> None:
         from pkulaw_engine.processors.documents import extract_document
 
@@ -627,6 +631,10 @@ class ProcessingTests(unittest.TestCase):
                     "1dde37af1bb049c03e71c9d20eb99a2a3e011fe9170306b3a154be5c8515788f",
                 )
 
+    @unittest.skipUnless(
+        sys.platform == "win32",
+        "bundled antiword is a Windows converter",
+    )
     def test_bundled_converter_receives_short_temporary_path(
         self,
     ) -> None:
@@ -711,6 +719,10 @@ class ProcessingTests(unittest.TestCase):
         )
         self.assertTrue((vendor_root / "SOURCE.md").is_file())
 
+    @unittest.skipUnless(
+        sys.platform == "win32",
+        "bundled antiword is a Windows converter",
+    )
     def test_bundled_converter_missing_and_corrupt_fail_unavailable(self) -> None:
         from pkulaw_engine.processors.documents import extract_document
 
@@ -757,6 +769,10 @@ class ProcessingTests(unittest.TestCase):
             "DOC_CONVERTER_UNAVAILABLE",
         )
 
+    @unittest.skipUnless(
+        sys.platform == "win32",
+        "bundled antiword is a Windows converter",
+    )
     def test_bundled_converter_version_mismatch_and_timeout_fail_closed(self) -> None:
         import pkulaw_engine.processors.documents as documents
 
@@ -996,9 +1012,14 @@ class ProcessingTests(unittest.TestCase):
                 ).glob("*.doc")
                 if path.name.startswith("中国互联网协会")
             )
+            legacy_case = (
+                (legacy_path, "bundled-antiword", "antiword")
+                if sys.platform == "win32"
+                else (legacy_path, "textutil", "textutil")
+            )
             cases = (
                 (docx_path, "python-docx", "python-docx"),
-                (legacy_path, "bundled-antiword", "antiword"),
+                legacy_case,
             )
             for index, (source, method, converter) in enumerate(cases, start=1):
                 with self.subTest(method=method):

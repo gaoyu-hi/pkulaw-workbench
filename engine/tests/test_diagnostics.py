@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -31,14 +32,17 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertEqual(checks["data-directory"]["status"], "ok")
             self.assertEqual(checks["sqlite-integrity"]["status"], "ok")
             self.assertEqual(checks["legacy-doc-converter"]["status"], "ok")
-            self.assertIn(
-                "bundled-antiword",
-                report["legacyConverters"],
-            )
-            self.assertIn(
-                "antiword.exe",
-                report["legacyConverters"]["bundled-antiword"],
-            )
+            if sys.platform == "win32":
+                self.assertIn(
+                    "bundled-antiword",
+                    report["legacyConverters"],
+                )
+                self.assertIn(
+                    "antiword.exe",
+                    report["legacyConverters"]["bundled-antiword"],
+                )
+            else:
+                self.assertTrue(report["legacyConverters"]["textutil"])
             self.assertTrue(report["engine"]["pythonVersion"])
             self.assertIn("DrissionPage", report["dependencies"])
 

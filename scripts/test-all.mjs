@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import {
@@ -19,7 +20,12 @@ function run(command, args, cwd) {
   }
 }
 
-run(process.execPath, ["--test", "scripts/tests"], root);
+const scriptTests = fs
+  .readdirSync(path.join(root, "scripts", "tests"))
+  .filter((name) => name.endsWith(".test.mjs"))
+  .map((name) => path.join("scripts", "tests", name))
+  .sort();
+run(process.execPath, ["--test", ...scriptTests], root);
 
 const python = pythonCommand(process.platform, process.env);
 run(python, ["-X", "utf8", "-m", "unittest", "discover", "-s", "tests", "-v"], path.join(root, "engine"));
