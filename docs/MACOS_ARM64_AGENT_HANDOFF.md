@@ -105,6 +105,14 @@ export PKULAW_PYTHON="$(python3 -c 'import sys; print(sys.executable)')"
 
 ## 构建 Apple 芯片版本
 
+没有 Apple Developer 证书、只做开发测试时：
+
+```bash
+CSC_IDENTITY_AUTO_DISCOVERY=false pnpm build:mac
+```
+
+已有 Developer ID 证书时：
+
 ```bash
 pnpm build:mac
 ```

@@ -11,15 +11,13 @@ files:
   - node_modules/fflate/**/*
 
 extraResources:
-  - from: ../../release/macos/engine
+  - from: ../../release/macos/engine/pkulaw-engine
     to: engine
   - from: ../../deployment
     to: deployment
 
 mac:
   category: public.app-category.productivity
-  identity: null
-  hardenedRuntime: false
   gatekeeperAssess: false
   target:
     - target: dmg

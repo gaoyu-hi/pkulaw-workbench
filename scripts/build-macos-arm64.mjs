@@ -5,7 +5,10 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
-import { assertMacArm64Host } from "./lib/build-host.mjs";
+import {
+  assertMacArm64Host,
+  macDmgArtifacts
+} from "./lib/build-host.mjs";
 
 assertMacArm64Host(process.platform, process.arch);
 
@@ -18,6 +21,7 @@ const packageInfo = JSON.parse(
   await fsp.readFile(path.join(appRoot, "package.json"), "utf8")
 );
 const version = String(packageInfo.version || "0.0.0");
+const dmgArtifacts = macDmgArtifacts(releaseRoot, version);
 const python = path.join(
   root,
   ".packaging-venv",
@@ -58,6 +62,8 @@ if (!fs.existsSync(python)) {
 await fsp.mkdir(releaseRoot, { recursive: true });
 await fsp.rm(engineBuildRoot, { recursive: true, force: true });
 await fsp.rm(workRoot, { recursive: true, force: true });
+await fsp.rm(dmgArtifacts.dmg, { force: true });
+await fsp.rm(dmgArtifacts.checksum, { force: true });
 
 run(pnpm, ["--dir", appRoot, "build"]);
 run(python, [
@@ -96,10 +102,7 @@ run(pnpm, [
   "electron-builder.mac.yml"
 ]);
 
-const dmgPath = path.join(
-  releaseRoot,
-  `PkulawWorkbench-${version}-macOS-arm64.dmg`
-);
+const dmgPath = dmgArtifacts.dmg;
 if (!fs.existsSync(dmgPath)) {
   throw new Error(`Electron Builder did not produce ${dmgPath}`);
 }
