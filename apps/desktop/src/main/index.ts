@@ -9,6 +9,7 @@ import {
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
+import net from "node:net";
 import path from "node:path";
 import { strFromU8, unzipSync } from "fflate";
 import type {
@@ -5417,12 +5418,35 @@ function configureApplicationEvents(): void {
   });
 }
 
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
 async function bootstrap(): Promise<void> {
   if (!app.requestSingleInstanceLock()) {
     app.quit();
     return;
   }
   configureApplicationEvents();
+
+  const envPort = Number(process.env.PKULAW_DEBUG_PORT || 0);
+  if (Number.isInteger(envPort) && envPort > 0 && envPort <= 65535) {
+    debugPort = envPort;
+  } else {
+    debugPort = await getFreePort();
+    app.commandLine.appendSwitch("remote-debugging-port", String(debugPort));
+    app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+  }
+
   await app.whenReady();
 
   const dataDirectory = resolveDataDirectory();
@@ -5430,10 +5454,6 @@ async function bootstrap(): Promise<void> {
   const engineDirectory = backendLaunch.engineDirectory;
   const appVersion = resolveAppVersion();
   const pythonPath = backendLaunch.pythonPath;
-  debugPort = Number(process.env.PKULAW_DEBUG_PORT || 0);
-  if (!Number.isInteger(debugPort) || debugPort <= 0 || debugPort > 65535) {
-    throw new Error("PKULAW_DEBUG_PORT must be injected before the Electron process starts");
-  }
   const allowPackagedFixture =
     !app.isPackaged ||
     process.env.PKULAW_ALLOW_PACKAGED_FIXTURE === "1";
