@@ -223,6 +223,9 @@ class SettingsArtifactDeletionTests(unittest.TestCase):
         with self.assertRaises(ValidationError) as context:
             self.store.settings_artifact_preview(running["id"])
         self.assertEqual(context.exception.code, "TASK_NOT_PAUSED")
+        with self.assertRaises(ValidationError) as clear_context:
+            self.store.clear_task_results(running["id"])
+        self.assertEqual(clear_context.exception.code, "TASK_NOT_PAUSED")
 
         paused = self.store.create_task(
             name="暂停任务",
@@ -233,6 +236,50 @@ class SettingsArtifactDeletionTests(unittest.TestCase):
         self.store.update_task(paused["id"], status="paused")
         preview = self.store.settings_artifact_preview(paused["id"])
         self.assertEqual(preview["artifactSummary"]["registeredFileCount"], 0)
+
+    def test_path_safety_classification_matches_cleanup_preview(self) -> None:
+        output = self.root / "分类输出"
+        output.mkdir()
+        outside = self.root / "outside.txt"
+        outside.write_text("outside", encoding="utf-8")
+        task = self.store.create_task(
+            name="分类任务",
+            mode="single",
+            task_input={},
+            output_dir=str(output),
+        )
+        self.store.upsert_processing_run(
+            "run-classify",
+            task["id"],
+            status="completed",
+            progress=1.0,
+            current_stage="completed",
+        )
+        self.store.add_task_artifact(
+            task["id"],
+            "run-classify",
+            kind="outside",
+            path=str(outside),
+        )
+
+        self.store.update_task(task["id"], status="stopped", current_stage="stopped")
+        cleanup = self.store.cleanup_preview([task["id"]])
+        cleanup_reason = next(
+            item["reason"]
+            for item in cleanup["files"]
+            if item["path"] == str(outside.resolve())
+        )
+
+        self.store.update_task(task["id"], status="paused", current_stage="paused")
+        settings = self.store.settings_artifact_preview(task["id"])
+        settings_reason = next(
+            item["reason"]
+            for item in settings["files"]
+            if item["path"] == str(outside.resolve())
+        )
+
+        self.assertEqual(cleanup_reason, "OUTSIDE_TASK_OUTPUT")
+        self.assertEqual(settings_reason, cleanup_reason)
 
 
 if __name__ == "__main__":

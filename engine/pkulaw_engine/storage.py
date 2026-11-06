@@ -735,23 +735,15 @@ class TaskStore:
             is_file = resolved.is_file() if exists else False
             owners = sorted(global_owners.get(normalized, set()))
             external_owners = sorted(set(owners) - selected_set)
-            reason = ""
-            if not Path(str(entry["rawPath"])).is_absolute():
-                reason = "PATH_NOT_ABSOLUTE"
-            elif self._contains_parent_segment(str(entry["rawPath"])):
-                reason = "PATH_TRAVERSAL"
-            elif resolved == home or resolved == Path(resolved.anchor):
-                reason = "PROTECTED_ROOT"
-            elif resolved == database_parent or resolved == self.database_path.resolve(strict=False):
-                reason = "PROTECTED_DATA_DIRECTORY"
-            elif output_roots and not any(self._path_within(resolved, root) for root in output_roots):
-                reason = "OUTSIDE_TASK_OUTPUT"
-            elif resolved in output_roots:
-                reason = "TASK_OUTPUT_DIRECTORY"
-            elif exists and not is_file:
-                reason = "NOT_A_FILE"
-            elif external_owners:
-                reason = "SHARED_WITH_OTHER_TASK"
+            reason = self._classify_registered_path(
+                raw=str(entry["rawPath"]),
+                normalized=normalized,
+                resolved=resolved,
+                exists=exists,
+                is_file=is_file,
+                output_roots=output_roots,
+                external_owners=set(external_owners),
+            )
             item = {
                 "path": normalized,
                 "rawPath": entry["rawPath"],
@@ -895,6 +887,40 @@ class TaskStore:
             )
         return task
 
+    def _classify_registered_path(
+        self,
+        *,
+        raw: str,
+        normalized: str,
+        resolved: Path,
+        exists: bool,
+        is_file: bool,
+        output_roots: list[Path],
+        external_owners: set[str],
+    ) -> str:
+        home = Path.home().resolve(strict=False)
+        database_parent = self.database_path.parent.resolve(strict=False)
+        database_file = self.database_path.resolve(strict=False)
+        if not Path(str(raw)).is_absolute():
+            return "PATH_NOT_ABSOLUTE"
+        if self._contains_parent_segment(str(raw)):
+            return "PATH_TRAVERSAL"
+        if resolved == home or resolved == Path(resolved.anchor):
+            return "PROTECTED_ROOT"
+        if resolved == database_parent or resolved == database_file:
+            return "PROTECTED_DATA_DIRECTORY"
+        if output_roots and not any(
+            self._path_within(resolved, root) for root in output_roots
+        ):
+            return "OUTSIDE_TASK_OUTPUT"
+        if any(resolved == root for root in output_roots):
+            return "TASK_OUTPUT_DIRECTORY"
+        if exists and not is_file:
+            return "NOT_A_FILE"
+        if external_owners:
+            return "SHARED_WITH_OTHER_TASK"
+        return ""
+
     def _settings_artifact_inventory(
         self,
         task: dict[str, Any],
@@ -928,25 +954,15 @@ class TaskStore:
             is_file = resolved.is_file() if exists else False
             owners = sorted(global_owners.get(normalized, set()))
             external_owners = set(owners) - {task_id}
-            reason = ""
-            if not Path(str(ref["raw"])).is_absolute():
-                reason = "PATH_NOT_ABSOLUTE"
-            elif self._contains_parent_segment(str(ref["raw"])):
-                reason = "PATH_TRAVERSAL"
-            elif resolved == home or resolved == Path(resolved.anchor):
-                reason = "PROTECTED_ROOT"
-            elif resolved == database_parent or resolved == database_file:
-                reason = "PROTECTED_DATA_DIRECTORY"
-            elif output_root is None or not self._path_within(
-                resolved, output_root
-            ):
-                reason = "OUTSIDE_TASK_OUTPUT"
-            elif resolved == output_root:
-                reason = "TASK_OUTPUT_DIRECTORY"
-            elif exists and not is_file:
-                reason = "NOT_A_FILE"
-            elif external_owners:
-                reason = "SHARED_WITH_OTHER_TASK"
+            reason = self._classify_registered_path(
+                raw=str(ref["raw"]),
+                normalized=normalized,
+                resolved=resolved,
+                exists=exists,
+                is_file=is_file,
+                output_roots=[output_root] if output_root is not None else [],
+                external_owners=external_owners,
+            )
             try:
                 size_bytes = resolved.stat().st_size if exists and is_file else 0
             except OSError:
@@ -1111,9 +1127,7 @@ class TaskStore:
         }
 
     def clear_task_results(self, task_id: str) -> dict[str, int]:
-        task = self.get_task(task_id)
-        if task is None:
-            raise ValidationError("TASK_NOT_FOUND", f"task {task_id} was not found")
+        self._settings_paused_task(task_id)
         tables = (
             "task_items",
             "task_batches",
