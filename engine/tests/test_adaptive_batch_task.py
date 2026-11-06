@@ -12,8 +12,11 @@ from pkulaw_engine.browser_bridge import BrowserBridge
 from pkulaw_engine.capture_boundary import CaptureBoundaryRequired
 from pkulaw_engine.controls.task_control import TaskControl
 from pkulaw_engine.logging_utils import JsonLineLogger
+from pkulaw_engine.search_strategy_version import (
+    refresh_adaptive_progress_total,
+)
 from pkulaw_engine.selections.pagination import PageSelection
-from pkulaw_engine.selections.years import YearSelection
+from pkulaw_engine.selections.years import SearchCombination, YearSelection
 from pkulaw_engine.selections.years import initial_adaptive_combinations
 from pkulaw_engine.sources.pkulaw import LoginRequired, ManualActionRequired
 from pkulaw_engine.sources.search_transaction import (
@@ -418,6 +421,46 @@ class AdaptiveBatchTaskTests(unittest.TestCase):
             lambda _event, _data: None,
         )
         return manager
+
+    def test_adaptive_batch_total_updates_after_missing_years_append(
+        self,
+    ) -> None:
+        combinations = [
+            SearchCombination(
+                query="碳中和",
+                library="central",
+                year=ALL_YEARS,
+                query_index=0,
+                library_index=0,
+                year_index=0,
+                combination_index=1,
+            ),
+            SearchCombination(
+                query="碳中和",
+                library="local",
+                year=ALL_YEARS,
+                query_index=0,
+                library_index=1,
+                year_index=0,
+                combination_index=2,
+            ),
+        ]
+        combinations.append(
+            SearchCombination(
+                query="碳中和",
+                library="central",
+                year="2023",
+                query_index=0,
+                library_index=0,
+                year_index=1,
+                combination_index=3,
+                action_kind="year-filter-switch",
+            )
+        )
+        self.assertGreater(
+            refresh_adaptive_progress_total(2, combinations),
+            2,
+        )
 
     def test_batch_v2_range_submits_keyword_once_per_sublibrary(self) -> None:
         adapter = FakeAdapter(

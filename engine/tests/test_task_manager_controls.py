@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from pkulaw_engine.batch_task import BatchTaskManager
 from pkulaw_engine.controls.task_control import TaskControl
 from pkulaw_engine.logging_utils import JsonLineLogger
+from pkulaw_engine.search_strategy_version import parse_search_strategy_version
 from pkulaw_engine.single_task import SingleTaskManager
 from pkulaw_engine.sources.pkulaw import ManualActionRequired
 from pkulaw_engine.selections.years import (
@@ -15,6 +16,34 @@ from pkulaw_engine.selections.years import (
     initial_adaptive_combinations,
 )
 from pkulaw_engine.storage import TaskStore, ValidationError
+
+
+class SearchStrategyVersionTests(unittest.TestCase):
+    def test_search_strategy_missing_defaults_to_legacy_one(self) -> None:
+        self.assertEqual(parse_search_strategy_version({}), 1)
+
+    def test_search_strategy_accepts_integer_one_and_two(self) -> None:
+        self.assertEqual(
+            parse_search_strategy_version({"searchStrategyVersion": 1}),
+            1,
+        )
+        self.assertEqual(
+            parse_search_strategy_version({"searchStrategyVersion": 2}),
+            2,
+        )
+
+    def test_search_strategy_rejects_boolean_true(self) -> None:
+        with self.assertRaises(ValidationError) as context:
+            parse_search_strategy_version({"searchStrategyVersion": True})
+        self.assertEqual(context.exception.code, "INVALID_SEARCH_STRATEGY_VERSION")
+
+    def test_search_strategy_rejects_string_and_float(self) -> None:
+        for value in ("2", 1.5, None, 3):
+            with self.subTest(value=value):
+                with self.assertRaises(ValidationError):
+                    parse_search_strategy_version(
+                        {"searchStrategyVersion": value}
+                    )
 
 
 class FakeThread:

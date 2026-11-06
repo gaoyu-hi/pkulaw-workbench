@@ -48,6 +48,10 @@ from .search_governor import (
     SearchActionGovernor,
     SearchActionKind,
 )
+from .search_strategy_version import (
+    parse_search_strategy_version,
+    refresh_adaptive_progress_total,
+)
 from .search_window import (
     YearPartitionRequired,
     assess_result_window,
@@ -2507,6 +2511,10 @@ class BatchTaskManager:
                             combinations=combinations,
                             adaptive_missing_years=adaptive_missing_years,
                         )
+                        combination_count = refresh_adaptive_progress_total(
+                            combination_count,
+                            combinations,
+                        )
                         break
                 if page >= total_pages:
                     if (
@@ -2522,6 +2530,10 @@ class BatchTaskManager:
                             scope_state=scope_state,
                             combinations=combinations,
                             adaptive_missing_years=adaptive_missing_years,
+                        )
+                        combination_count = refresh_adaptive_progress_total(
+                            combination_count,
+                            combinations,
                         )
                     stats["status"] = (
                         "no_result"
@@ -5581,20 +5593,7 @@ class BatchTaskManager:
             page_selection,
             dict(task.get("checkpoint") or {}),
         )
-        try:
-            search_strategy_version = int(
-                payload.get("searchStrategyVersion") or 1
-            )
-        except (TypeError, ValueError) as exc:
-            raise ValidationError(
-                "INVALID_SEARCH_STRATEGY",
-                "searchStrategyVersion must be 1 or 2",
-            ) from exc
-        if search_strategy_version not in {1, 2}:
-            raise ValidationError(
-                "INVALID_SEARCH_STRATEGY",
-                "searchStrategyVersion must be 1 or 2",
-            )
+        search_strategy_version = parse_search_strategy_version(payload)
         output_value = payload.get("outputDir") or task.get("outputDir") or ""
         if not str(output_value).strip():
             raise ValidationError("OUTPUT_DIR_REQUIRED", "批量任务必须指定输出目录")
