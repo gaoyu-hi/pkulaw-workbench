@@ -804,6 +804,9 @@ class BatchTaskManager:
                 )
                 boundary_checkpoint["adaptiveSearch"] = {
                     **(boundary_checkpoint.get("adaptiveSearch") or {}),
+                    **(
+                        dict(getattr(boundary, "adaptive_search", None) or {})
+                    ),
                     "fallbackMode": "A",
                     "boundary": boundary.boundary.to_checkpoint(),
                     "currentAction": "capture-boundary",
@@ -1867,38 +1870,45 @@ class BatchTaskManager:
                     combination.action_kind == "year-filter-switch"
                     and adaptive_truncated
                 ):
+                    boundary_record = CaptureBoundary(
+                        reason="单年结果仍超过来源可访问窗口",
+                        query=query,
+                        library=library,
+                        year=year,
+                        province=(
+                            combination.province
+                            or config.province_for(library)
+                        ),
+                        completed_policy_count=(
+                            self._adaptive_completed_policy_count(
+                                year_stats
+                            )
+                        ),
+                        remaining_scopes=(
+                            {
+                                "query": query,
+                                "library": library,
+                                "year": year,
+                                "province": (
+                                    combination.province
+                                    or config.province_for(library)
+                                ),
+                            },
+                        ),
+                        estimated_result_operations=1,
+                        detected_at=time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ",
+                            time.gmtime(),
+                        ),
+                    )
                     raise CaptureBoundaryRequired(
-                        CaptureBoundary(
-                            reason="单年结果仍超过来源可访问窗口",
-                            query=query,
-                            library=library,
-                            year=year,
-                            province=(
-                                combination.province
-                                or config.province_for(library)
-                            ),
-                            completed_policy_count=(
-                                self._adaptive_completed_policy_count(
-                                    year_stats
-                                )
-                            ),
-                            remaining_scopes=(
-                                {
-                                    "query": query,
-                                    "library": library,
-                                    "year": year,
-                                    "province": (
-                                        combination.province
-                                        or config.province_for(library)
-                                    ),
-                                },
-                            ),
-                            estimated_result_operations=1,
-                            detected_at=time.strftime(
-                                "%Y-%m-%dT%H:%M:%SZ",
-                                time.gmtime(),
-                            ),
-                        )
+                        boundary_record,
+                        adaptive_search=self._adaptive_search_checkpoint(
+                            governor=governor,
+                            adaptive_scope_states=adaptive_scope_states,
+                            config=config,
+                            boundary=boundary_record.to_checkpoint(),
+                        ),
                     )
             self._safe_boundary(
                 store,
@@ -3045,42 +3055,12 @@ class BatchTaskManager:
             if pages
         ]
         if adaptive_mode:
-            completed_years: set[str] = set()
-            missing_years: set[str] = set()
-            for (scope_query, scope_library), scope_state in (
-                adaptive_scope_states.items()
-            ):
-                scope_plan = plan_adaptive_years(
-                    config.year_selection,
-                    scope_state.get("entries") or [],
-                    scope_state.get("collected") or {},
-                    query=scope_query,
-                    library=scope_library,
-                )
-                scope_state["plan"] = scope_plan
-                completed_years.update(scope_plan.completed_years)
-                missing_years.update(scope_plan.missing_years)
-            adaptive_checkpoint = {
-                "keywordSubmissions": int(
-                    governor.snapshot()["keyword_submissions"]
-                )
-                if governor is not None
-                else 0,
-                "yearFilterSwitches": int(
-                    governor.snapshot()["year_filter_switches"]
-                )
-                if governor is not None
-                else 0,
-                "captchaWaits": int(
-                    governor.snapshot()["captcha_waits"]
-                )
-                if governor is not None
-                else 0,
-                "completedYears": sorted(completed_years),
-                "missingYears": sorted(missing_years),
-                "fallbackMode": "A" if adaptive_boundary else "C",
-                "boundary": adaptive_boundary,
-            }
+            adaptive_checkpoint = self._adaptive_search_checkpoint(
+                governor=governor,
+                adaptive_scope_states=adaptive_scope_states,
+                config=config,
+                boundary=adaptive_boundary,
+            )
         else:
             adaptive_checkpoint = {}
         prepared_snapshot = build_progress_snapshot(
@@ -4798,6 +4778,43 @@ class BatchTaskManager:
             max(0, int(item.get("rowsAccepted") or 0))
             for item in year_stats.values()
         )
+
+    @staticmethod
+    def _adaptive_search_checkpoint(
+        *,
+        governor: SearchActionGovernor | None,
+        adaptive_scope_states: dict[tuple[str, str], dict[str, Any]],
+        config: BatchTaskConfig,
+        boundary: dict[str, Any],
+    ) -> dict[str, Any]:
+        completed_years: set[str] = set()
+        missing_years: set[str] = set()
+        for (scope_query, scope_library), scope_state in (
+            adaptive_scope_states.items()
+        ):
+            plan = plan_adaptive_years(
+                config.year_selection,
+                scope_state.get("entries") or [],
+                scope_state.get("collected") or {},
+                query=scope_query,
+                library=scope_library,
+            )
+            completed_years.update(plan.completed_years)
+            missing_years.update(plan.missing_years)
+        snapshot = governor.snapshot() if governor is not None else {}
+        return {
+            "keywordSubmissions": int(
+                snapshot.get("keyword_submissions") or 0
+            ),
+            "yearFilterSwitches": int(
+                snapshot.get("year_filter_switches") or 0
+            ),
+            "captchaWaits": int(snapshot.get("captcha_waits") or 0),
+            "completedYears": sorted(completed_years),
+            "missingYears": sorted(missing_years),
+            "fallbackMode": "A" if boundary else "C",
+            "boundary": boundary,
+        }
 
     def _append_adaptive_missing_year_combinations(
         self,
