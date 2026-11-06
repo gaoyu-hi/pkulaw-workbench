@@ -25,6 +25,7 @@
     "tests/collector-panels.test.ts",
     "tests/collector-workflow.test.ts",
     "tests/collector-reset.test.ts",
+    "tests/collector-lifecycle-integration.test.ts",
     "tests/browser-surface.test.ts",
     "tests/manual-recovery-ui.test.ts",
     "tests/overview-workspace.test.ts",
