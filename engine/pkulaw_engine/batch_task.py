@@ -1758,7 +1758,9 @@ class BatchTaskManager:
                         combination=combination,
                         governor=governor,
                         completed_policy_count=(
-                            self._adaptive_completed_policy_count(year_stats)
+                            self._adaptive_completed_policy_count(
+                                seen_policy_ids
+                            )
                         ),
                     )
                 else:
@@ -1903,7 +1905,7 @@ class BatchTaskManager:
                         ),
                         completed_policy_count=(
                             self._adaptive_completed_policy_count(
-                                year_stats
+                                seen_policy_ids
                             )
                         ),
                         remaining_scopes=tuple(
@@ -4789,12 +4791,9 @@ class BatchTaskManager:
 
     @staticmethod
     def _adaptive_completed_policy_count(
-        year_stats: dict[str, dict[str, Any]],
+        unique_identities: set[str],
     ) -> int:
-        return sum(
-            max(0, int(item.get("rowsAccepted") or 0))
-            for item in year_stats.values()
-        )
+        return len(unique_identities)
 
     @staticmethod
     def _adaptive_search_checkpoint(
@@ -5018,6 +5017,14 @@ class BatchTaskManager:
                 return state
             except (ManualActionRequired, LoginRequired) as exc:
                 last_error = exc
+                captcha_detected = (
+                    isinstance(exc, ManualActionRequired)
+                    and (
+                        "验证码" in str(exc)
+                        or "滑块" in str(exc)
+                        or "captcha" in str(exc).lower()
+                    )
+                )
                 self._wait_for_manual(
                     store,
                     controller,
@@ -5027,31 +5034,34 @@ class BatchTaskManager:
                     if isinstance(exc, LoginRequired)
                     else "waiting_manual",
                 )
-                released = governor.note_captcha_cleared()
-                if released:
-                    raise CaptureBoundaryRequired(
-                        CaptureBoundary(
-                            reason="重复验证码，进入采集边界确认",
-                            query=combination.query,
-                            library=combination.library,
-                            year=combination.year,
-                            province=province,
-                            completed_policy_count=completed_policy_count,
-                            remaining_scopes=(
-                                {
-                                    "query": combination.query,
-                                    "library": combination.library,
-                                    "year": combination.year,
-                                    "province": province,
-                                },
-                            ),
-                            estimated_result_operations=1,
-                            detected_at=time.strftime(
-                                "%Y-%m-%dT%H:%M:%SZ",
-                                time.gmtime(),
-                            ),
+                if captcha_detected:
+                    released = governor.note_captcha_cleared()
+                    if released:
+                        raise CaptureBoundaryRequired(
+                            CaptureBoundary(
+                                reason="重复验证码，进入采集边界确认",
+                                query=combination.query,
+                                library=combination.library,
+                                year=combination.year,
+                                province=province,
+                                completed_policy_count=(
+                                    completed_policy_count
+                                ),
+                                remaining_scopes=(
+                                    {
+                                        "query": combination.query,
+                                        "library": combination.library,
+                                        "year": combination.year,
+                                        "province": province,
+                                    },
+                                ),
+                                estimated_result_operations=1,
+                                detected_at=time.strftime(
+                                    "%Y-%m-%dT%H:%M:%SZ",
+                                    time.gmtime(),
+                                ),
+                            )
                         )
-                    )
                 request = adapter.current_search_request
                 session = adapter.current_search_session
                 if request is not None and session is not None:

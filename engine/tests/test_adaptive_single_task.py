@@ -312,11 +312,11 @@ class AdaptiveSingleTaskTests(unittest.TestCase):
         self.store.close()
         self.tempdir.cleanup()
 
-    def _config(self) -> SingleTaskConfig:
+    def _config(self, *, library: str = "both") -> SingleTaskConfig:
         return SingleTaskConfig(
             queries=("碳中和",),
             match_mode="keyword",
-            library="both",
+            library=library,
             year_selection=YearSelection(
                 mode="range",
                 start_year=1949,
@@ -501,6 +501,72 @@ class AdaptiveSingleTaskTests(unittest.TestCase):
             "missingYears",
             raised.exception.adaptive_search,
         )
+        self.assertIn("scopeStates", raised.exception.adaptive_search)
+
+    def test_single_v2_boundary_resume_processes_only_remaining_year(self) -> None:
+        self.store.update_task(
+            self.task_id,
+            checkpoint={
+                "adaptiveSearch": {
+                    "fallbackMode": "A",
+                    "boundary": {
+                        "confirmedAt": "2026-11-06T00:00:00Z",
+                        "remainingScopes": [
+                            {
+                                "query": "碳中和",
+                                "library": "central",
+                                "year": "2023",
+                                "province": "全部省份",
+                                "queryIndex": 0,
+                                "libraryIndex": 0,
+                            }
+                        ],
+                    },
+                    "scopeStates": {
+                        "碳中和|central": {
+                            "entries": [
+                                {"value": "2022", "count": 1},
+                                {"value": "2023", "count": 1},
+                            ],
+                            "collected": {"2022": 1},
+                        }
+                    },
+                }
+            },
+        )
+        adapter = FakeSingleAdapter(
+            year_entries=[
+                {"value": "2022", "count": 1},
+                {"value": "2023", "count": 1},
+            ]
+        )
+        manager = self._manager()
+        with mock.patch(
+            "pkulaw_engine.single_task.SearchActionGovernor",
+            return_value=SimpleNamespace(
+                before_result_action=lambda _kind: None,
+                after_result_action=lambda *a, **k: None,
+                note_captcha_cleared=lambda *a, **k: False,
+                snapshot=lambda: {
+                    "keyword_submissions": 0,
+                    "year_filter_switches": 0,
+                    "captcha_waits": 0,
+                    "released_to_boundary": False,
+                },
+            ),
+        ):
+            manager._collect(
+                self.task_id,
+                self._config(library="central"),
+                adapter,
+                self.store,
+                TaskControl(self.task_id),
+            )
+        self.assertEqual(
+            [call["year"] for call in adapter.search_calls],
+            ["2023"],
+        )
+        self.assertNotIn(ALL_YEARS, [call["year"] for call in adapter.search_calls])
 
 
 if __name__ == "__main__":

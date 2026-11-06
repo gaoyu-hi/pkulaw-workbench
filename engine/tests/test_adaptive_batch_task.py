@@ -15,7 +15,7 @@ from pkulaw_engine.logging_utils import JsonLineLogger
 from pkulaw_engine.selections.pagination import PageSelection
 from pkulaw_engine.selections.years import YearSelection
 from pkulaw_engine.selections.years import initial_adaptive_combinations
-from pkulaw_engine.sources.pkulaw import ManualActionRequired
+from pkulaw_engine.sources.pkulaw import LoginRequired, ManualActionRequired
 from pkulaw_engine.sources.search_transaction import (
     SearchRequestIdentity,
     SearchSession,
@@ -284,6 +284,50 @@ class CaptchaReuseAdapter(FakeAdapter):
             state = super().search(**kwargs)
             raise ManualActionRequired("captcha before result confirmation")
         return super().search(**kwargs)
+
+
+class LoginWaitAdapter(FakeAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            year_entries=[{"value": "2022", "count": 1}],
+            complete_all_years=True,
+        )
+        self.first_search = True
+
+    def search(self, **kwargs: Any) -> dict[str, Any]:
+        if self.first_search:
+            self.first_search = False
+            raise LoginRequired("登录会话失效或需要机构登录")
+        return super().search(**kwargs)
+
+
+class CrossScopeBoundaryAdapter(FakeAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            year_entries=[
+                {"value": "2022", "count": 1},
+                {"value": "2023", "count": 2},
+            ],
+            truncated_year="2023",
+            complete_all_years=True,
+        )
+
+    def select_year(self, *, year: str) -> dict[str, Any]:
+        request = self.current_search_request
+        if request is None:
+            raise RuntimeError("no request")
+        rows = [dict(_row("central-碳中和-2", "2023"))]
+        state = _state(
+            search_id=f"year-{year}",
+            query=request.query,
+            library=request.library,
+            year=year,
+            rows=rows,
+            result_count=201,
+            reported_total_pages=2,
+        )
+        self._attach(state, request.query, request.library, year)
+        return state
 
 
 class DuplicateYearSwitchAdapter(FakeAdapter):
@@ -566,6 +610,70 @@ class AdaptiveBatchTaskTests(unittest.TestCase):
         self.assertEqual(len(adapter.search_calls), 1)
         self.assertIsNotNone(adapter.current_search_session)
         self.assertEqual(state["searchSession"]["query"], "碳中和")
+
+    def test_batch_login_wait_does_not_count_as_captcha(self) -> None:
+        adapter = LoginWaitAdapter()
+        manager = self._manager()
+        combination = initial_adaptive_combinations(
+            ("碳中和",),
+            ("central",),
+            YearSelection(mode="range", start_year=1949, end_year=2026),
+        )[0]
+        captured_notes: list[float | None] = []
+        governor = SimpleNamespace(
+            before_result_action=lambda _kind: None,
+            after_result_action=lambda *a, **k: None,
+            note_captcha_cleared=lambda *a, **k: (
+                captured_notes.append(a[0] if a else None),
+                False,
+            )[1],
+            snapshot=lambda: {
+                "keyword_submissions": 0,
+                "year_filter_switches": 0,
+                "captcha_waits": 0,
+                "released_to_boundary": False,
+            },
+        )
+        with mock.patch.object(manager, "_wait_for_manual"):
+            state = manager._run_adaptive_result_action(
+                store=self.store,
+                controller=TaskControl(self.task_id),
+                task_id=self.task_id,
+                config=self._config(library="central"),
+                adapter=adapter,
+                combination=combination,
+                governor=governor,
+            )
+        self.assertEqual(captured_notes, [])
+        self.assertEqual(len(adapter.search_calls), 1)
+        self.assertIsNotNone(state)
+
+    def test_batch_v2_boundary_completed_count_is_unique_across_scopes(self) -> None:
+        adapter = CrossScopeBoundaryAdapter()
+        manager = self._manager()
+        with mock.patch(
+            "pkulaw_engine.batch_task.SearchActionGovernor",
+            return_value=SimpleNamespace(
+                before_result_action=lambda _kind: None,
+                after_result_action=lambda *a, **k: None,
+                note_captcha_cleared=lambda *a, **k: False,
+                snapshot=lambda: {
+                    "keyword_submissions": 0,
+                    "year_filter_switches": 0,
+                    "captcha_waits": 0,
+                    "released_to_boundary": False,
+                },
+            ),
+        ):
+            with self.assertRaises(CaptureBoundaryRequired) as context:
+                manager._prepare_batches(
+                    self.store,
+                    self.task_id,
+                    self._config(library="central"),
+                    adapter,
+                    TaskControl(self.task_id),
+                )
+        self.assertEqual(context.exception.boundary.completed_policy_count, 2)
 
     def test_batch_v2_boundary_persists_waiting_manual_state(self) -> None:
         adapter = FakeAdapter(
