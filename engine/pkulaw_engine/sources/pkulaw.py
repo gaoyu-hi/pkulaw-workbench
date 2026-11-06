@@ -17,6 +17,7 @@ from ..body_quality import (
 from ..browser_bridge import BrowserBridge
 from ..logging_utils import JsonLineLogger
 from ..policy import extract_policy_id
+from ..search_recovery import PendingSearchAction
 from ..storage import ValidationError
 from .access_state import read_stable_access_state
 from .page_navigation import PageNavigationError, transition_next_page
@@ -439,17 +440,273 @@ class PkulawAdapter:
             state=state,
             action=lambda: self._apply_filter_action("year", year),
             required_filter_keys=("year",),
-            require_page_size=True,
-            require_ungrouped=True,
         )
         if int(state.get("page") or 0) != 1:
             raise YearFilterUnavailable(
                 f"公布年份切换后未回到第 1 页：{state.get('page')}"
             )
+        old_request = self.current_search_request
+        old_session = self.current_search_session
+        old_search_url = self.search_url
+        self.current_search_request = target_request
+        self.current_search_session = session
+        try:
+            session, state = self.converge_result_layout(
+                request=target_request,
+                expected_page_size=target_request.requested_page_size,
+            )
+        except Exception:
+            self.current_search_request = old_request
+            self.current_search_session = old_session
+            self.search_url = old_search_url
+            raise
         self.current_search_request = target_request
         self.current_search_session = session
         self.search_url = str(session.url or state.get("url") or "")
         return state
+
+    def observe_pending_action(
+        self,
+        action: PendingSearchAction,
+    ) -> dict[str, Any] | None:
+        """Read the live result page without replaying the pending action."""
+
+        with self.bridge.transaction() as tab:
+            observation = self._read_results(tab)
+        request = action.request
+        search_id = (
+            self.current_search_session.search_id
+            if self.current_search_session is not None
+            else f"recovery-{action.action_id}"
+        )
+        session = SearchSession.from_observation(
+            request,
+            observation,
+            search_id=search_id,
+        )
+        if session.page != int(action.expected_page):
+            return None
+        if not (
+            session.query == request.query
+            and session.match_mode == request.match_mode
+            and session.library == request.library
+        ):
+            return None
+        actual_filters = {
+            "year": session.actual_year,
+            "province": session.actual_province,
+            "timeliness": session.actual_timeliness,
+        }
+        requested_filters = {
+            "year": request.year,
+            "province": request.province,
+            "timeliness": request.timeliness,
+        }
+        if action.kind == "year-filter-switch":
+            if not filter_values_match(
+                request.year,
+                session.actual_year,
+            ):
+                return None
+        elif action.kind == "filter-change":
+            filter_key = str(action.target.get("filterKey") or "")
+            if filter_key not in requested_filters:
+                return None
+            if not filter_values_match(
+                requested_filters[filter_key],
+                actual_filters[filter_key],
+            ):
+                return None
+        elif action.kind == "next-page":
+            if (
+                session.result_signature
+                == action.previous_result_signature
+            ):
+                return None
+        else:
+            for key in requested_filters:
+                if not filter_values_match(
+                    requested_filters[key],
+                    actual_filters[key],
+                ):
+                    if session.is_verified_empty_exact_title():
+                        break
+                    return None
+        state = self._attach_search_session(
+            dict(observation),
+            session,
+        )
+        state["resultSignature"] = session.result_signature
+        state["actualYear"] = session.actual_year
+        state["actualProvince"] = session.actual_province
+        state["actualTimeliness"] = session.actual_timeliness
+        return state
+
+    def converge_result_layout(
+        self,
+        *,
+        request: SearchRequestIdentity,
+        expected_page_size: int,
+    ) -> tuple[SearchSession, dict[str, Any]]:
+        """Ensure year/filter changes finish with ungrouped, sized results."""
+
+        with self.bridge.transaction() as tab:
+            observation = self._read_results(tab)
+        base_session = self.current_search_session
+        search_id = (
+            base_session.search_id
+            if base_session is not None
+            else f"layout-{uuid.uuid4()}"
+        )
+        session = SearchSession.from_observation(
+            request,
+            observation,
+            search_id=search_id,
+        )
+        state = self._attach_search_session(observation, session)
+        return self._converge_result_layout_state(
+            request=request,
+            session=session,
+            state=state,
+            expected_page_size=int(expected_page_size),
+        )
+
+    def _converge_result_layout_state(
+        self,
+        *,
+        request: SearchRequestIdentity,
+        session: SearchSession,
+        state: dict[str, Any],
+        expected_page_size: int,
+    ) -> tuple[SearchSession, dict[str, Any]]:
+        if session.is_verified_empty_exact_title():
+            return session, state
+        if session.page != 1:
+            raise SearchTransitionTimeout(
+                f"结果布局核验要求第 1 页，实际为第 {session.page} 页"
+            )
+        required_filters = self._request_filter_keys(request)
+        if session.grouping_mode != "ungrouped":
+            session, state, _ = self._run_refinement(
+                request=request,
+                session=session,
+                state=state,
+                action=self._ensure_ungrouped_action,
+                required_filter_keys=required_filters,
+                require_ungrouped=True,
+            )
+        if session.actual_page_size != expected_page_size:
+            session, state, _ = self._run_refinement(
+                request=request,
+                session=session,
+                state=state,
+                action=lambda: self._apply_page_size_action(
+                    expected_page_size
+                ),
+                required_filter_keys=required_filters,
+                require_page_size=True,
+                require_ungrouped=True,
+            )
+        return self._finalize_result_layout(request, session, state)
+
+    def _finalize_result_layout(
+        self,
+        request: SearchRequestIdentity,
+        session: SearchSession,
+        state: dict[str, Any],
+    ) -> tuple[SearchSession, dict[str, Any]]:
+        transaction = SearchTransaction(
+            request,
+            token=f"layout-{uuid.uuid4()}",
+            previous={"markerApplied": False},
+            stable_samples=3,
+            timeout_seconds=1,
+            search_id=session.search_id,
+            required_filter_keys=self._request_filter_keys(request),
+            require_page_size=True,
+            require_ungrouped=True,
+        )
+        observation = dict(state)
+        observation.setdefault("ready", True)
+        observation.setdefault("loading", False)
+        observation.setdefault("resultsRootPresent", True)
+        observation.setdefault("transitionMarkerPresent", False)
+        observation.setdefault("queryValue", request.query)
+        observation.setdefault(
+            "conditionsText",
+            f"关键词：{request.query}",
+        )
+        observation.setdefault("hiddenKeywords", request.query)
+        observation.setdefault(
+            "currentLibrary",
+            request.expected_library_code,
+        )
+        observation.setdefault(
+            "hiddenLibrary",
+            request.expected_library_code,
+        )
+        observation.setdefault(
+            "searchType",
+            request.expected_search_types[0],
+        )
+        observation.setdefault("matchType", "Exact")
+        observation.setdefault("actualYear", session.actual_year)
+        observation.setdefault("actualProvince", session.actual_province)
+        observation.setdefault(
+            "actualTimeliness",
+            session.actual_timeliness,
+        )
+        observation.setdefault(
+            "actualPageSize",
+            session.actual_page_size,
+        )
+        refined: SearchSession | None = None
+        for _ in range(3):
+            refined = transaction.observe(observation)
+        if refined is None:
+            code = transaction.last_rejection_code
+            message = (
+                transaction.last_rejection
+                or "结果布局未能连续三次稳定核验"
+            )
+            if code == "RESULT_GROUPING_UNAVAILABLE":
+                raise ResultGroupingUnavailable(
+                    message,
+                    details=dict(transaction.last_rejection_details),
+                )
+            if code == "PAGE_SIZE_NOT_APPLIED":
+                raise PageSizeNotApplied(
+                    message,
+                    details=dict(transaction.last_rejection_details),
+                )
+            if code == "FILTER_NOT_APPLIED":
+                if message.startswith("year 筛选未应用"):
+                    raise YearFilterUnavailable(
+                        message,
+                        details=dict(
+                            transaction.last_rejection_details
+                        ),
+                    )
+                raise FilterNotApplied(
+                    message,
+                    details=dict(transaction.last_rejection_details),
+                )
+            raise SearchTransitionTimeout(message, code=code)
+        return refined, self._attach_search_session(observation, refined)
+
+    @staticmethod
+    def _request_filter_keys(
+        request: SearchRequestIdentity,
+    ) -> tuple[str, ...]:
+        return tuple(
+            key
+            for key, value in (
+                ("year", request.year),
+                ("province", request.province),
+                ("timeliness", request.timeliness),
+            )
+            if str(value or "").strip()
+        )
 
     def read_results(self) -> dict[str, Any]:
         self._ensure_operation_ready("read-results")
@@ -1863,83 +2120,12 @@ class PkulawAdapter:
                         },
                     )
 
-        session, state, group_action = self._run_refinement(
+        return self._converge_result_layout_state(
             request=request,
             session=session,
             state=state,
-            action=self._ensure_ungrouped_action,
-            required_filter_keys=tuple(applied_filters),
-            require_ungrouped=True,
-        )
-        if group_action.get("changed"):
-            pass
-        elif session.grouping_mode != "ungrouped":
-            raise ResultGroupingUnavailable(
-                f"结果仍未切换为不分组：{session.grouping_mode}"
-            )
-
-        session, state, page_size_action = self._run_refinement(
-            request=request,
-            session=session,
-            state=state,
-            action=lambda: self._apply_page_size_action(
-                request.requested_page_size
-            ),
-            required_filter_keys=tuple(applied_filters),
-            require_page_size=True,
-            require_ungrouped=True,
-        )
-        if page_size_action.get("changed"):
-            pass
-        elif (
-            session.actual_page_size != request.requested_page_size
-            or not self._page_size_rows_match(
-                state,
-                expected_page_size=request.requested_page_size,
-            )
-        ):
-            raise PageSizeNotApplied(
-                f"每页条数未生效：{session.actual_page_size} != "
-                f"{request.requested_page_size}"
-            )
-        for key, requested, actual in (
-            ("year", request.year, session.actual_year),
-            ("province", request.province, session.actual_province),
-            ("timeliness", request.timeliness, session.actual_timeliness),
-        ):
-            if not filter_values_match(requested, actual):
-                if key == "year":
-                    raise YearFilterUnavailable(
-                        f"公布年份筛选未生效：{actual or '<missing>'} != {requested}",
-                        details={
-                            "filterKey": key,
-                            "expected": str(requested or ""),
-                            "actual": str(actual or ""),
-                        },
-                    )
-                raise FilterNotApplied(
-                    f"{key} 筛选未生效：{actual or '<missing>'} != {requested}",
-                    details={
-                        "filterKey": key,
-                        "expected": str(requested or ""),
-                        "actual": str(actual or ""),
-                    },
-                )
-        if session.actual_page_size != request.requested_page_size:
-            raise PageSizeNotApplied(
-                f"每页条数未生效：{session.actual_page_size} != "
-                f"{request.requested_page_size}"
-            )
-        if not self._page_size_rows_match(
-            state,
             expected_page_size=request.requested_page_size,
-        ):
-            raise PageSizeNotApplied("当前页行数与每页条数不一致")
-        if session.grouping_mode != "ungrouped":
-            raise ResultGroupingUnavailable(
-                f"结果仍未切换为不分组：{session.grouping_mode}"
-            )
-        return session, state
+        )
 
     def _run_refinement(
         self,
@@ -1970,7 +2156,7 @@ class PkulawAdapter:
             request,
             token=token,
             previous=previous,
-            stable_samples=2,
+            stable_samples=3,
             timeout_seconds=25,
             search_id=session.search_id,
             required_filter_keys=required_filter_keys,
@@ -2597,27 +2783,80 @@ class PkulawAdapter:
         return list(dict.fromkeys(values))
 
     def _ensure_ungrouped_action(self) -> dict[str, Any]:
-        selector = str(self.selectors.get("groupUngroup") or "")
-        if not selector:
-            return {"ok": False, "changed": False, "reason": "ungroup control missing"}
+        profile_selector = str(
+            self.selectors.get("groupUngroup") or ""
+        )
+        selectors = [
+            'input[name="group"][value="2"]',
+            profile_selector,
+            '#right_form input[name="group"][value="2"]',
+        ]
+        selectors = [
+            selector
+            for index, selector in enumerate(selectors)
+            if selector and selector not in selectors[:index]
+        ]
         with self.bridge.transaction() as tab:
             result = tab.run_js(
                 f"""
                 return (() => {{
-                  let group = null;
-                  try {{
-                    group = document.querySelector({json.dumps(selector)});
-                  }} catch (_) {{
-                    return {{ok:false, changed:false, reason:'invalid ungroup selector'}};
+                  const selectors = {json.dumps(selectors, ensure_ascii=False)};
+                  const visible = element => !!(
+                    element &&
+                    element.getClientRects().length &&
+                    getComputedStyle(element).display !== 'none' &&
+                    getComputedStyle(element).visibility !== 'hidden'
+                  );
+                  const matches = [];
+                  for (const selector of selectors) {{
+                    try {{
+                      matches.push(
+                        ...document.querySelectorAll(selector)
+                      );
+                    }} catch (_) {{
+                      continue;
+                    }}
                   }}
-                  if (!group) return {{
+                  const unique = [...new Set(matches)].filter(visible);
+                  if (!unique.length) return {{
                     ok:false,
                     changed:false,
+                    checked:false,
+                    selector:'',
                     reason:'ungroup control missing'
                   }};
-                  if (group.checked) return {{ok:true, changed:false}};
+                  if (unique.length > 1) return {{
+                    ok:false,
+                    changed:false,
+                    checked:false,
+                    selector:'',
+                    reason:'multiple visible ungroup controls',
+                    count:unique.length
+                  }};
+                  const group = unique[0];
+                  const matchedSelector = selectors.find(selector => {{
+                    try {{
+                      return document.querySelectorAll(selector).length &&
+                        [...document.querySelectorAll(selector)].includes(group);
+                    }} catch (_) {{
+                      return false;
+                    }}
+                  }}) || '';
+                  if (group.checked) return {{
+                    ok:true,
+                    changed:false,
+                    checked:true,
+                    selector:matchedSelector
+                  }};
                   group.click();
-                  return {{ok:true, changed:true}};
+                  group.dispatchEvent(new Event('change', {{bubbles:true}}));
+                  return {{
+                    ok:group.checked,
+                    changed:true,
+                    checked:group.checked,
+                    selector:matchedSelector,
+                    reason:group.checked ? '' : 'ungroup click did not check radio'
+                  }};
                 }})()
                 """
             ) or {}

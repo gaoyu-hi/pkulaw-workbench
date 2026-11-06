@@ -27,7 +27,9 @@ from pkulaw_engine.sources.pkulaw import (
 from pkulaw_engine.sources.search_transaction import (
     SearchRequestIdentity,
     SearchSession,
+    result_signature,
 )
+from pkulaw_engine.search_recovery import PendingSearchAction
 from pkulaw_engine.sources.selector_profile import load_selector_profiles
 
 
@@ -91,6 +93,278 @@ class PkulawAdapterOperationTests(unittest.TestCase):
             observed_at="2026-11-01T00:00:00Z",
         )
         return replace(session, **changes)
+
+    def _observation(
+        self,
+        request: SearchRequestIdentity,
+        *,
+        grouping_mode: str = "ungrouped",
+        page: int = 1,
+        rows: list[dict[str, object]] | None = None,
+        actual_page_size: int | None = None,
+    ) -> dict[str, object]:
+        result_rows = rows or [
+            {
+                "policyId": "policy-1",
+                "title": "测试政策",
+                "url": "https://example.test/policy-1.html",
+            }
+        ]
+        return {
+            "ready": True,
+            "loading": False,
+            "resultsRootPresent": True,
+            "transitionMarkerPresent": False,
+            "queryValue": request.query,
+            "conditionsText": f"关键词：{request.query}",
+            "hiddenKeywords": request.query,
+            "currentLibrary": request.expected_library_code,
+            "hiddenLibrary": request.expected_library_code,
+            "searchType": "Title",
+            "matchType": "Exact",
+            "page": page,
+            "totalPages": 2,
+            "resultCount": 2,
+            "actualPageSize": (
+                actual_page_size
+                if actual_page_size is not None
+                else request.requested_page_size
+            ),
+            "groupingMode": grouping_mode,
+            "actualYear": request.year,
+            "actualProvince": request.province,
+            "actualTimeliness": request.timeliness,
+            "rows": result_rows,
+            "resultSignature": result_signature(result_rows),
+            "url": "https://example.test/search",
+        }
+
+    def _pending_year_action(
+        self,
+        year: str = "2022",
+    ) -> PendingSearchAction:
+        return PendingSearchAction(
+            action_id="year-action-1",
+            kind="year-filter-switch",
+            request=self._request(year=year),
+            expected_page=1,
+            previous_result_signature="previous",
+            target={"year": year},
+            attempt_count=0,
+            created_at="2026-11-06T00:00:00Z",
+        )
+
+    def test_year_verifier_reuses_already_applied_year_without_click(
+        self,
+    ) -> None:
+        action = self._pending_year_action()
+        with (
+            patch.object(
+                self.adapter,
+                "_read_results",
+                return_value=self._observation(
+                    action.request,
+                    grouping_mode="grouped",
+                ),
+            ),
+            patch.object(self.adapter, "_apply_filter_action") as apply_filter,
+            patch.object(self.adapter, "next_page") as next_page,
+            patch.object(self.adapter, "_ensure_ungrouped_action") as ungroup,
+            patch.object(self.adapter, "_apply_page_size_action") as page_size,
+        ):
+            state = self.adapter.observe_pending_action(action)
+
+        self.assertIsNotNone(state)
+        assert state is not None
+        self.assertEqual(state["searchSession"]["actualYear"], "2022")
+        apply_filter.assert_not_called()
+        next_page.assert_not_called()
+        ungroup.assert_not_called()
+        page_size.assert_not_called()
+
+    def test_year_verifier_rejects_unapplied_year(self) -> None:
+        action = self._pending_year_action()
+        observation = self._observation(action.request)
+        observation["actualYear"] = "全部年份"
+
+        with patch.object(
+            self.adapter,
+            "_read_results",
+            return_value=observation,
+        ):
+            self.assertIsNone(
+                self.adapter.observe_pending_action(action)
+            )
+
+    def test_next_page_verifier_requires_target_and_changed_signature(
+        self,
+    ) -> None:
+        request = self._request()
+        action = PendingSearchAction(
+            action_id="page-action-1",
+            kind="next-page",
+            request=request,
+            expected_page=2,
+            previous_result_signature=result_signature(
+                [{"policyId": "policy-1"}]
+            ),
+            target={"page": 2},
+            attempt_count=0,
+            created_at="2026-11-06T00:00:00Z",
+        )
+        observation = self._observation(
+            request,
+            page=2,
+            rows=[{"policyId": "policy-2"}],
+        )
+        with patch.object(
+            self.adapter,
+            "_read_results",
+            return_value=observation,
+        ):
+            state = self.adapter.observe_pending_action(action)
+
+        self.assertIsNotNone(state)
+        self.assertEqual(state["searchSession"]["page"], 2)
+
+        same_rows = self._observation(
+            request,
+            page=2,
+            rows=[{"policyId": "policy-1"}],
+        )
+        with patch.object(
+            self.adapter,
+            "_read_results",
+            return_value=same_rows,
+        ):
+            self.assertIsNone(
+                self.adapter.observe_pending_action(action)
+            )
+
+    def test_year_change_reapplies_ungrouped_before_page_size(self) -> None:
+        request = self._request(year="2022", requested_page_size=2)
+        old_request = self._request(
+            year="全部年份",
+            requested_page_size=2,
+        )
+        old_session = self._session(old_request)
+        self.adapter.current_search_request = old_request
+        self.adapter.current_search_session = old_session
+        initial = self._observation(
+            request,
+            grouping_mode="grouped",
+            actual_page_size=1,
+        )
+        ungrouped = self._observation(
+            request,
+            grouping_mode="ungrouped",
+            actual_page_size=1,
+        )
+        sized_rows = [
+            {"policyId": "policy-1"},
+            {"policyId": "policy-2"},
+        ]
+        finalized = self._observation(
+            request,
+            grouping_mode="ungrouped",
+            rows=sized_rows,
+            actual_page_size=2,
+        )
+        ungrouped_session = SearchSession.from_observation(
+            request,
+            ungrouped,
+            search_id=old_session.search_id,
+        )
+        final_session = SearchSession.from_observation(
+            request,
+            finalized,
+            search_id=old_session.search_id,
+        )
+        calls: list[str] = []
+
+        def refine(**kwargs: object) -> tuple[SearchSession, dict[str, object], dict[str, object]]:
+            action = kwargs["action"]
+            assert callable(action)
+            result = action()
+            calls.append(str(result.get("kind")))
+            if result.get("kind") == "grouping-change":
+                return ungrouped_session, ungrouped, {
+                    "ok": True,
+                    "changed": True,
+                    "checked": True,
+                }
+            return final_session, finalized, {
+                "ok": True,
+                "changed": True,
+            }
+
+        with (
+            patch.object(
+                self.adapter,
+                "_read_results",
+                return_value=initial,
+            ),
+            patch.object(
+                self.adapter,
+                "_ensure_ungrouped_action",
+                return_value={
+                    "ok": True,
+                    "changed": True,
+                    "checked": True,
+                    "kind": "grouping-change",
+                },
+            ),
+            patch.object(
+                self.adapter,
+                "_apply_page_size_action",
+                return_value={
+                    "ok": True,
+                    "changed": True,
+                    "kind": "page-size-change",
+                },
+            ),
+            patch.object(
+                self.adapter,
+                "_run_refinement",
+                side_effect=refine,
+            ),
+        ):
+            session, state = self.adapter.converge_result_layout(
+                request=request,
+                expected_page_size=2,
+            )
+
+        self.assertEqual(
+            calls,
+            ["grouping-change", "page-size-change"],
+        )
+        self.assertEqual(session.grouping_mode, "ungrouped")
+        self.assertEqual(
+            state["searchSession"]["groupingMode"],
+            "ungrouped",
+        )
+
+    def test_layout_already_converged_does_not_click(self) -> None:
+        request = self._request()
+        old_session = self._session(request)
+        self.adapter.current_search_request = request
+        self.adapter.current_search_session = old_session
+        observation = self._observation(request)
+        with (
+            patch.object(
+                self.adapter,
+                "_read_results",
+                return_value=observation,
+            ),
+            patch.object(self.adapter, "_run_refinement") as refine,
+        ):
+            session, _ = self.adapter.converge_result_layout(
+                request=request,
+                expected_page_size=request.requested_page_size,
+            )
+
+        refine.assert_not_called()
+        self.assertEqual(session.grouping_mode, "ungrouped")
 
     def test_read_results_next_page_and_go_to_page(self) -> None:
         with patch.object(self.adapter, "_ensure_operation_ready"):
@@ -934,9 +1208,13 @@ class PkulawAdapterOperationTests(unittest.TestCase):
             self.adapter.ensure_ungrouped_results()
 
         self.adapter.selectors["groupUngroup"] = ""
-        self.assertFalse(
-            self.adapter.ensure_ungrouped_results()["ok"]
-        )
+        self.tab.run_js.return_value = {
+            "ok": False,
+            "changed": False,
+            "reason": "ungroup control missing",
+        }
+        with self.assertRaises(ResultGroupingUnavailable):
+            self.adapter.ensure_ungrouped_results()
 
     def test_year_tree_confirms_inner_node_selection(self) -> None:
         with (
@@ -1677,6 +1955,11 @@ class PkulawAdapterOperationTests(unittest.TestCase):
                     {"ok": True, "changed": True},
                 ),
             ) as run_refinement,
+            patch.object(
+                self.adapter,
+                "converge_result_layout",
+                return_value=(refined_session, refined_state),
+            ) as converge,
         ):
             result = self.adapter.select_year(year=target_year)
 
@@ -1691,8 +1974,14 @@ class PkulawAdapterOperationTests(unittest.TestCase):
         call_kwargs = run_refinement.call_args.kwargs
         self.assertEqual(call_kwargs["request"].year, target_year)
         self.assertEqual(call_kwargs["required_filter_keys"], ("year",))
-        self.assertTrue(call_kwargs["require_ungrouped"])
-        self.assertTrue(call_kwargs["require_page_size"])
+        self.assertFalse(
+            call_kwargs.get("require_ungrouped", False)
+        )
+        self.assertFalse(call_kwargs.get("require_page_size", False))
+        self.assertEqual(
+            converge.call_args.kwargs["expected_page_size"],
+            request.requested_page_size,
+        )
 
     def test_select_year_rejects_without_active_session(self) -> None:
         self.adapter.current_search_request = None

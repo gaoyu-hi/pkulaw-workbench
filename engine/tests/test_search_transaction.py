@@ -666,6 +666,26 @@ class SearchTransactionTests(unittest.TestCase):
         self.assertNotEqual(refined_session, base_session)
         self.assertNotEqual(refined_session.url, base_session.url)
 
+    def test_layout_verification_requires_three_equal_samples(self) -> None:
+        transaction = SearchTransaction(
+            self.request,
+            token="layout-three-samples",
+            previous={"markerApplied": False},
+            stable_samples=3,
+            required_filter_keys=("year", "province", "timeliness"),
+            require_page_size=True,
+            require_ungrouped=True,
+        )
+        observation = self._observation()
+
+        self.assertIsNone(transaction.observe(observation))
+        self.assertIsNone(transaction.observe(observation))
+        session = transaction.observe(observation)
+
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.grouping_mode, "ungrouped")
+
 
 if __name__ == "__main__":
     unittest.main()
