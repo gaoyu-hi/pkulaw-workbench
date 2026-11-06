@@ -67,6 +67,7 @@ import { useManualRecovery } from "./useManualRecovery";
 import TaskSettingsPanel from "./TaskSettingsPanel";
 import {
   resetBatchCollectorForm,
+  shouldAutoSelectTask,
   shouldResetCollector
 } from "./collector-reset";
 
@@ -155,7 +156,7 @@ export default function BatchCollectorPanel({
   const previousStatusByTaskRef = useRef<
     Record<string, string | undefined>
   >({});
-  const skipNextAutoSelectRef = useRef(false);
+  const suppressedCompletedTaskIdRef = useRef("");
   const [notice, setNotice] = useState(
     "批量任务会先确认页数和规模，再使用当前内置浏览器执行受控下载。"
   );
@@ -184,6 +185,11 @@ export default function BatchCollectorPanel({
     const next = await window.pkulaw.getBatchTaskDetails(taskId);
     setDetails(next);
     setSelectedTaskId(taskId);
+  }
+
+  function selectTask(taskId: string): void {
+    suppressedCompletedTaskIdRef.current = "";
+    void loadDetails(taskId);
   }
 
   useEffect(() => {
@@ -271,13 +277,12 @@ export default function BatchCollectorPanel({
   }, [selectedTaskId, details?.task.status, backend.status]);
 
   useEffect(() => {
-    if (!selectedTaskId && tasks[0]) {
-      if (skipNextAutoSelectRef.current) {
-        skipNextAutoSelectRef.current = false;
-        return;
-      }
-      void loadDetails(tasks[0].id).catch(() => undefined);
+    if (selectedTaskId || !tasks[0]) return;
+    if (!shouldAutoSelectTask(tasks[0].id, suppressedCompletedTaskIdRef.current)) {
+      return;
     }
+    suppressedCompletedTaskIdRef.current = "";
+    void loadDetails(tasks[0].id).catch(() => undefined);
   }, [selectedTaskId, tasks]);
 
   useEffect(() => {
@@ -287,7 +292,7 @@ export default function BatchCollectorPanel({
     const currentStatus = details.task.status;
     previousStatusByTaskRef.current[taskId] = currentStatus;
     if (!shouldResetCollector(previousStatus, currentStatus)) return;
-    skipNextAutoSelectRef.current = true;
+    suppressedCompletedTaskIdRef.current = taskId;
     resetBatchCollectorForm(
       appInfo?.defaultBatchOutputDir || "",
       {
@@ -496,6 +501,7 @@ export default function BatchCollectorPanel({
         operationId
       });
       setDetails(result.details as BatchTaskDetails);
+      suppressedCompletedTaskIdRef.current = "";
       setSelectedTaskId(result.task.id);
       await refreshTaskList();
       setNotice(
@@ -837,7 +843,7 @@ export default function BatchCollectorPanel({
                   type="button"
                   key={task.id}
                   className={selectedTaskId === task.id ? "selected" : ""}
-                  onClick={() => void loadDetails(task.id)}
+                  onClick={() => selectTask(task.id)}
                 >
                   <span>{task.name}</span>
                   <small>{TASK_STATUS_LABELS[task.status]}</small>

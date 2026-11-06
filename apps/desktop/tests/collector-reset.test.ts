@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   resetBatchCollectorForm,
   resetSingleCollectorForm,
+  shouldAutoSelectTask,
   shouldResetCollector
 } from "../src/renderer/src/collector-reset";
 
@@ -50,6 +51,13 @@ describe("collector completion reset", () => {
     expect(shouldResetCollector("completed", "completed")).toBe(false);
     expect(shouldResetCollector("running", "failed")).toBe(false);
     expect(shouldResetCollector(undefined, "completed")).toBe(false);
+  });
+
+  it("keeps a completed task suppressed until the user creates or selects another task", () => {
+    expect(shouldAutoSelectTask("task-a", "task-a")).toBe(false);
+    expect(shouldAutoSelectTask("task-b", "task-a")).toBe(true);
+    expect(shouldAutoSelectTask(undefined, "task-a")).toBe(false);
+    expect(shouldAutoSelectTask("task-a", "")).toBe(true);
   });
 
   it("resets the single collector to defaults", () => {

@@ -60,6 +60,7 @@ import { useManualRecovery } from "./useManualRecovery";
 import TaskSettingsPanel from "./TaskSettingsPanel";
 import {
   resetSingleCollectorForm,
+  shouldAutoSelectTask,
   shouldResetCollector
 } from "./collector-reset";
 
@@ -160,7 +161,7 @@ export default function SingleCollectorPanel({
   const previousStatusByTaskRef = useRef<
     Record<string, string | undefined>
   >({});
-  const skipNextAutoSelectRef = useRef(false);
+  const suppressedCompletedTaskIdRef = useRef("");
   const [notice, setNotice] = useState(
     "任务会使用当前内置浏览器，不保存账号密码，不绕过登录、滑块或机构额度。"
   );
@@ -189,6 +190,11 @@ export default function SingleCollectorPanel({
     const next = await window.pkulaw.getTaskDetails(taskId);
     setDetails(next);
     setSelectedTaskId(taskId);
+  }
+
+  function selectTask(taskId: string): void {
+    suppressedCompletedTaskIdRef.current = "";
+    void loadDetails(taskId);
   }
 
   useEffect(() => {
@@ -283,13 +289,12 @@ export default function SingleCollectorPanel({
   }, [selectedTaskId, details?.task.status, backend.status]);
 
   useEffect(() => {
-    if (!selectedTaskId && tasks[0]) {
-      if (skipNextAutoSelectRef.current) {
-        skipNextAutoSelectRef.current = false;
-        return;
-      }
-      void loadDetails(tasks[0].id).catch(() => undefined);
+    if (selectedTaskId || !tasks[0]) return;
+    if (!shouldAutoSelectTask(tasks[0].id, suppressedCompletedTaskIdRef.current)) {
+      return;
     }
+    suppressedCompletedTaskIdRef.current = "";
+    void loadDetails(tasks[0].id).catch(() => undefined);
   }, [selectedTaskId, tasks]);
 
   useEffect(() => {
@@ -299,7 +304,7 @@ export default function SingleCollectorPanel({
     const currentStatus = details.task.status;
     previousStatusByTaskRef.current[taskId] = currentStatus;
     if (!shouldResetCollector(previousStatus, currentStatus)) return;
-    skipNextAutoSelectRef.current = true;
+    suppressedCompletedTaskIdRef.current = taskId;
     resetSingleCollectorForm(
       appInfo?.defaultSingleOutputDir || "",
       {
@@ -516,6 +521,7 @@ export default function SingleCollectorPanel({
         },
         operationId
       });
+      suppressedCompletedTaskIdRef.current = "";
       setSelectedTaskId(result.task.id);
       setDetails(result.details as TaskDetails);
       await refreshTaskList();
@@ -897,7 +903,7 @@ export default function SingleCollectorPanel({
                   type="button"
                   key={task.id}
                   className={selectedTaskId === task.id ? "selected" : ""}
-                  onClick={() => void loadDetails(task.id)}
+                  onClick={() => selectTask(task.id)}
                 >
                   <span>{task.name}</span>
                   <small>{TASK_STATUS_LABELS[task.status]}</small>
