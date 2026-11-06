@@ -9,6 +9,7 @@ import type {
   CleanupPreview,
   CollectorStartResult,
   DataProcessingDetails,
+  FreshTaskSeed,
   InstitutionProfile,
   ManualRecoveryResult,
   TaskCreateInput,
@@ -307,6 +308,16 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
     });
     return result as unknown as TaskDetails;
   });
+  ipcMain.handle(
+    "tasks:prepare-fresh",
+    async (_event, taskId: unknown, operationId: unknown) => {
+      const result = await pythonService.request("task.prepare-fresh", {
+        taskId: assertTaskId(taskId),
+        operationId: requiredOperationId(operationId)
+      });
+      return result as unknown as FreshTaskSeed;
+    }
+  );
   ipcMain.handle(
     "tasks:continue-capture-boundary",
     async (_event, taskId: unknown, operationId: unknown) => {
@@ -734,6 +745,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
       "tasks:list",
       "tasks:get",
       "tasks:get-details",
+      "tasks:prepare-fresh",
       "tasks:continue-capture-boundary",
       "tasks:resume-after-manual",
       "tasks:apply-settings",

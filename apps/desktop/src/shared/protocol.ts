@@ -174,10 +174,31 @@ export interface TaskTimelineEvent {
   createdAt: string;
 }
 
+export interface TaskCapabilities {
+  canContinueManual: boolean;
+  canResumeFromCheckpoint: boolean;
+  canEditSettings: boolean;
+  canCreateFreshTask: boolean;
+  leaseHeld: boolean;
+  leaseTaskId: string;
+  resumeBlockReason: string;
+}
+
+export interface FreshTaskSeed {
+  mode: TaskMode;
+  input: Record<string, unknown>;
+  outputDir: string;
+  oldTaskId: string;
+  oldTaskPreserved: boolean;
+  mayDuplicateDownloads: boolean;
+  leaseHeld: boolean;
+}
+
 export interface TaskDetails {
   task: TaskRecord;
   items: TaskItemRecord[];
   timeline?: TaskTimelineEvent[];
+  capabilities: TaskCapabilities;
 }
 
 export interface BatchRecord {
@@ -207,6 +228,7 @@ export interface BatchTaskDetails {
   batches: BatchRecord[];
   items: TaskItemRecord[];
   timeline?: TaskTimelineEvent[];
+  capabilities: TaskCapabilities;
 }
 
 export interface PolicyDocumentRecord {
@@ -618,6 +640,10 @@ export interface DesktopApi {
   listTasks(limit?: number, includeArchived?: boolean): Promise<TaskRecord[]>;
   getTask(taskId: string): Promise<TaskRecord>;
   getTaskDetails(taskId: string): Promise<TaskDetails>;
+  prepareFreshTask(
+    taskId: string,
+    operationId: string
+  ): Promise<FreshTaskSeed>;
   resumeTaskAfterManual(
     taskId: string,
     operationId: string,

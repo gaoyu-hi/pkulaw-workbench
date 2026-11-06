@@ -11,6 +11,7 @@ import type {
   DesktopApi,
   DiagnosticsReport,
   EngineEvent,
+  FreshTaskSeed,
   InstitutionProfile,
   LogRecord,
   ManualRecoveryResult,
@@ -54,6 +55,12 @@ const api: DesktopApi = {
     ipcRenderer.invoke("tasks:get", taskId) as Promise<TaskRecord>,
   getTaskDetails: (taskId: string) =>
     ipcRenderer.invoke("tasks:get-details", taskId) as Promise<TaskDetails>,
+  prepareFreshTask: (taskId: string, operationId: string) =>
+    ipcRenderer.invoke(
+      "tasks:prepare-fresh",
+      taskId,
+      operationId
+    ) as Promise<FreshTaskSeed>,
   resumeTaskAfterManual: (
     taskId: string,
     operationId: string,

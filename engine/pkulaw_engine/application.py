@@ -39,6 +39,8 @@ from .settings_revision import (
     validate_artifact_policy,
 )
 from .storage import ACTIVE_TASK_STATUSES, TaskStore, ValidationError
+from .task_capabilities import derive_task_capabilities
+from .task_fresh_start import build_fresh_task_seed
 from .task_settings_revision import build_task_revision
 
 
@@ -779,7 +781,16 @@ class EngineApplication:
             task_id = str(params.get("taskId") or "").strip()
             if not task_id:
                 raise ValidationError("TASK_ID_REQUIRED", "taskId is required")
-            return response_message(request_id, self.batch_manager.details(task_id)), []
+            task = self.store.get_task(task_id)
+            if task is None:
+                raise ValidationError(
+                    "TASK_NOT_FOUND",
+                    f"task {task_id} was not found",
+                )
+            return response_message(
+                request_id,
+                self._task_details(task),
+            ), []
 
         if method == "task.continue-capture-boundary":
             task_id = str(params.get("taskId") or "").strip()
@@ -800,12 +811,21 @@ class EngineApplication:
             task = self.store.get_task(task_id)
             if task is None:
                 raise ValidationError("TASK_NOT_FOUND", f"task {task_id} was not found")
-            details = (
-                self.single_manager.details(task_id)
-                if task["mode"] == "single"
-                else self.batch_manager.details(task_id)
-            )
-            return response_message(request_id, details), []
+            return response_message(
+                request_id,
+                self._task_details(task),
+            ), []
+
+        if method == "task.prepare-fresh":
+            return response_message(
+                request_id,
+                self._prepare_fresh_task(
+                    str(params.get("taskId") or "").strip(),
+                    operation_id=str(
+                        params.get("operationId") or ""
+                    ).strip(),
+                ),
+            ), []
 
         if method == "task.apply-settings":
             task_id = str(params.get("taskId") or "").strip()
@@ -1032,11 +1052,115 @@ class EngineApplication:
             return task, False
 
     def _task_details(self, task: dict[str, Any]) -> dict[str, Any]:
-        return (
+        details = (
             self.single_manager.details(str(task["id"]))
             if task["mode"] == "single"
             else self.batch_manager.details(str(task["id"]))
         )
+        details["capabilities"] = self._task_capabilities(task).to_dict()
+        return details
+
+    def _task_capabilities(self, task: dict[str, Any]) -> Any:
+        manager = (
+            self.single_manager
+            if task["mode"] == "single"
+            else self.batch_manager
+        )
+        return derive_task_capabilities(
+            task,
+            controller_alive=manager.has_live_controller(
+                str(task["id"])
+            ),
+            lease=self.browser_lease.state(),
+        )
+
+    def _prepare_fresh_task(
+        self,
+        task_id: str,
+        *,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        if not task_id:
+            raise ValidationError(
+                "TASK_ID_REQUIRED",
+                "taskId is required",
+            )
+        fingerprint = json.dumps(
+            {"taskId": task_id, "action": "prepare-fresh"},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        cache_key = f"task.prepare-fresh:{operation_id}"
+        with self._operation_lock:
+            cached = self._operation_lookup(
+                cache_key if operation_id else "",
+                fingerprint,
+            )
+            task = self.store.get_task(task_id)
+            if task is None:
+                raise ValidationError(
+                    "TASK_NOT_FOUND",
+                    f"task {task_id} was not found",
+                )
+            if cached is not None:
+                cached_seed = dict(
+                    cached.get("result") or {}
+                ).get("seed")
+                if isinstance(cached_seed, dict):
+                    return dict(cached_seed)
+            manager = (
+                self.single_manager
+                if task["mode"] == "single"
+                else self.batch_manager
+            )
+            live = manager.has_live_controller(task_id)
+            lease = self.browser_lease.state()
+            capabilities = derive_task_capabilities(
+                task,
+                controller_alive=live,
+                lease=lease,
+            )
+            if not capabilities.can_create_fresh_task:
+                raise ValidationError(
+                    "FRESH_TASK_NOT_ALLOWED",
+                    capabilities.resume_block_reason
+                    or "当前任务不能新建替代任务",
+                )
+            if (
+                lease.get("taskId") == task_id
+                and not live
+            ):
+                self.browser_lease.release_for_task(task_id)
+                lease = self.browser_lease.state()
+            items = self.store.list_task_items(task_id)
+            batches = self.store.list_task_batches(task_id)
+            may_duplicate = bool(
+                any(
+                    str(item.get("status") or "") == "completed"
+                    and bool(
+                        dict(item.get("payload") or {}).get(
+                            "downloadedFile"
+                        )
+                    )
+                    for item in items
+                )
+                or any(
+                    str(batch.get("status") or "") == "completed"
+                    for batch in batches
+                )
+            )
+            seed = build_fresh_task_seed(
+                task,
+                may_duplicate_downloads=may_duplicate,
+                lease_held=bool(lease.get("taskId")),
+            ).to_dict()
+            self._remember_operation(
+                cache_key if operation_id else "",
+                fingerprint,
+                task_id,
+                result={"seed": seed},
+            )
+            return seed
 
     def _start_collector_task(
         self,
@@ -2237,12 +2361,15 @@ class EngineApplication:
         cache_key: str,
         fingerprint: str,
         task_id: str,
+        *,
+        result: dict[str, Any] | None = None,
     ) -> None:
         if not cache_key:
             return
         self._operation_cache[cache_key] = {
             "fingerprint": fingerprint,
             "taskId": task_id,
+            **({"result": dict(result)} if result is not None else {}),
         }
         self._operation_cache.move_to_end(cache_key)
         while len(self._operation_cache) > self._max_cached_operations:

@@ -294,6 +294,88 @@ class ManualRecoveryApplicationTests(unittest.TestCase):
         self.assertEqual(result["action"], "continue")
         self.assertEqual(accepted_events, ["recovery-current"])
 
+    def test_terminal_task_details_expose_fresh_capability(self) -> None:
+        task_id = str(self.task["id"])
+        self.store.update_task(
+            task_id,
+            status="stopped",
+            current_stage="stopped",
+            error={"code": "TASK_STOPPED", "message": "stopped"},
+            checkpoint={"currentPage": 2},
+        )
+        with patch.object(
+            self.application.single_manager,
+            "has_live_controller",
+            return_value=False,
+        ):
+            details = self.application._task_details(
+                self.store.get_task(task_id) or {}
+            )
+
+        self.assertTrue(
+            details["capabilities"]["canCreateFreshTask"]
+        )
+        self.assertFalse(
+            details["capabilities"]["canContinueManual"]
+        )
+
+    def test_prepare_fresh_releases_own_orphaned_lease(self) -> None:
+        task_id = str(self.task["id"])
+        self.store.update_task(
+            task_id,
+            status="stopped",
+            current_stage="stopped",
+            error={"code": "TASK_STOPPED", "message": "stopped"},
+            checkpoint={"currentPage": 2},
+        )
+        self.application.browser_lease.acquire(task_id, "single")
+
+        with patch.object(
+            self.application.single_manager,
+            "has_live_controller",
+            return_value=False,
+        ):
+            seed = self.application._prepare_fresh_task(
+                task_id,
+                operation_id="fresh-1",
+            )
+
+        self.assertEqual(seed["oldTaskId"], task_id)
+        self.assertEqual(seed["mode"], "single")
+        self.assertFalse(seed["leaseHeld"])
+        self.assertTrue(self.application.browser_lease.state()["available"])
+        self.assertIsNotNone(self.store.get_task(task_id))
+
+    def test_prepare_fresh_does_not_release_foreign_lease(self) -> None:
+        task_id = str(self.task["id"])
+        self.store.update_task(
+            task_id,
+            status="stopped",
+            current_stage="stopped",
+            error={"code": "TASK_STOPPED", "message": "stopped"},
+            checkpoint={"currentPage": 2},
+        )
+        self.application.browser_lease.acquire("other-task", "batch")
+
+        with patch.object(
+            self.application.single_manager,
+            "has_live_controller",
+            return_value=False,
+        ):
+            seed = self.application._prepare_fresh_task(
+                task_id,
+                operation_id="fresh-2",
+            )
+
+        self.assertTrue(seed["leaseHeld"])
+        self.assertFalse(
+            self.application.browser_lease.state()["available"]
+        )
+        self.assertEqual(
+            self.application.browser_lease.state()["taskId"],
+            "other-task",
+        )
+
 
 class ManualRecoveryRestartValidationTests(unittest.TestCase):
     def setUp(self) -> None:
