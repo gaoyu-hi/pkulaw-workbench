@@ -884,6 +884,270 @@ class TaskStore:
             "deleted": counts,
         }
 
+    def _settings_paused_task(self, task_id: str) -> dict[str, Any]:
+        task = self.get_task(task_id)
+        if task is None:
+            raise ValidationError("TASK_NOT_FOUND", f"task {task_id} was not found")
+        if task.get("status") != "paused":
+            raise ValidationError(
+                "TASK_NOT_PAUSED",
+                "只能为已暂停任务生成成果清理预览",
+            )
+        return task
+
+    def _settings_artifact_inventory(
+        self,
+        task: dict[str, Any],
+    ) -> dict[str, Any]:
+        task_id = str(task["id"])
+        output_raw = str(task.get("outputDir") or "").strip()
+        output_root = (
+            Path(output_raw).resolve(strict=False)
+            if output_raw
+            else None
+        )
+        home = Path.home().resolve(strict=False)
+        database_parent = self.database_path.parent.resolve(strict=False)
+        database_file = self.database_path.resolve(strict=False)
+
+        refs = self._registered_file_refs(task_id)
+        all_task_rows = self.connection.execute(
+            "SELECT id FROM tasks"
+        ).fetchall()
+        global_owners: dict[str, set[str]] = {}
+        for row in all_task_rows:
+            owner_id = str(row["id"])
+            for normalized in self._registered_file_refs(owner_id):
+                global_owners.setdefault(normalized, set()).add(owner_id)
+
+        files: list[dict[str, Any]] = []
+        protected: list[dict[str, Any]] = []
+        for normalized, ref in refs.items():
+            resolved = Path(normalized).resolve(strict=False)
+            exists = resolved.exists()
+            is_file = resolved.is_file() if exists else False
+            owners = sorted(global_owners.get(normalized, set()))
+            external_owners = set(owners) - {task_id}
+            reason = ""
+            if not Path(str(ref["raw"])).is_absolute():
+                reason = "PATH_NOT_ABSOLUTE"
+            elif self._contains_parent_segment(str(ref["raw"])):
+                reason = "PATH_TRAVERSAL"
+            elif resolved == home or resolved == Path(resolved.anchor):
+                reason = "PROTECTED_ROOT"
+            elif resolved == database_parent or resolved == database_file:
+                reason = "PROTECTED_DATA_DIRECTORY"
+            elif output_root is None or not self._path_within(
+                resolved, output_root
+            ):
+                reason = "OUTSIDE_TASK_OUTPUT"
+            elif resolved == output_root:
+                reason = "TASK_OUTPUT_DIRECTORY"
+            elif exists and not is_file:
+                reason = "NOT_A_FILE"
+            elif external_owners:
+                reason = "SHARED_WITH_OTHER_TASK"
+            try:
+                size_bytes = resolved.stat().st_size if exists and is_file else 0
+            except OSError:
+                size_bytes = 0
+            item = {
+                "path": normalized,
+                "rawPath": ref["raw"],
+                "taskIds": [task_id],
+                "sources": sorted(ref["sources"]),
+                "exists": exists,
+                "canTrash": not reason,
+                "reason": reason,
+                "sizeBytes": size_bytes,
+            }
+            files.append(item)
+            if reason:
+                protected.append(item)
+
+        eligible = [item for item in files if item["canTrash"]]
+        existing_eligible = [
+            item for item in eligible if item["exists"]
+        ]
+
+        directories: dict[str, dict[str, Any]] = {}
+        for item in existing_eligible:
+            path = Path(str(item["path"]))
+            parent = path.parent
+            external_owner = any(
+                other_path != str(path)
+                and Path(other_path).parent == parent
+                for other_path, owners in global_owners.items()
+                if set(owners) - {task_id}
+            )
+            try:
+                unregistered_present = any(
+                    entry.is_file()
+                    and str(entry.resolve(strict=False)) not in global_owners
+                    for entry in parent.iterdir()
+                )
+            except OSError:
+                unregistered_present = True
+            shared = external_owner or unregistered_present
+            can_prune = (
+                not shared
+                and output_root is not None
+                and parent != output_root
+                and self._path_within(parent, output_root)
+            )
+            directories[str(parent)] = {
+                "path": str(parent),
+                "taskIds": [task_id],
+                "shared": shared,
+                "canPrune": can_prune,
+                "reason": "SHARED_DIRECTORY" if shared else "TASK_DIRECTORY",
+            }
+
+        directory_count = sum(
+            1 for item in directories.values() if item["canPrune"]
+        )
+        from .settings_revision import ArtifactSummary
+
+        summary = ArtifactSummary(
+            completed_policy_count=int(
+                self.connection.execute(
+                    "SELECT COUNT(*) FROM task_items "
+                    "WHERE task_id = ? AND status = 'completed'",
+                    (task_id,),
+                ).fetchone()[0]
+            ),
+            completed_batch_count=int(
+                self.connection.execute(
+                    "SELECT COUNT(*) FROM task_batches "
+                    "WHERE task_id = ? AND status = 'completed'",
+                    (task_id,),
+                ).fetchone()[0]
+            ),
+            registered_file_count=len(files),
+            eligible_file_count=len(eligible),
+            protected_file_count=len(protected),
+            directory_count=directory_count,
+            estimated_freed_bytes=sum(
+                int(item["sizeBytes"]) for item in existing_eligible
+            ),
+        )
+        return {
+            "artifactSummary": summary.to_dict(),
+            "files": files,
+            "eligibleFiles": eligible,
+            "protectedFiles": protected,
+            "directories": sorted(
+                directories.values(),
+                key=lambda item: item["path"],
+            ),
+            "summary": {
+                "registeredFileCount": len(files),
+                "eligibleFileCount": len(eligible),
+                "existingEligibleFileCount": len(existing_eligible),
+                "protectedFileCount": len(protected),
+                "directoryCount": directory_count,
+                "estimatedFreedBytes": summary.estimated_freed_bytes,
+            },
+        }
+
+    def settings_artifact_preview(self, task_id: str) -> dict[str, Any]:
+        task = self._settings_paused_task(task_id)
+        return self._settings_artifact_inventory(task)
+
+    def permanently_delete_task_outputs(
+        self,
+        task_id: str,
+    ) -> dict[str, Any]:
+        task = self._settings_paused_task(task_id)
+        inventory = self._settings_artifact_inventory(task)
+        output_raw = str(task.get("outputDir") or "").strip()
+        output_root = (
+            Path(output_raw).resolve(strict=False)
+            if output_raw
+            else None
+        )
+        deleted_files: list[str] = []
+        failed_files: list[str] = []
+        freed_bytes = 0
+        for item in inventory["eligibleFiles"]:
+            if not item["exists"]:
+                continue
+            path = Path(str(item["path"]))
+            size_bytes = int(item["sizeBytes"])
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                failed_files.append(str(path))
+                continue
+            deleted_files.append(str(path))
+            freed_bytes += size_bytes
+
+        deleted_directories: list[str] = []
+        for directory in sorted(
+            inventory["directories"],
+            key=lambda item: len(Path(str(item["path"])).parts),
+            reverse=True,
+        ):
+            if not directory.get("canPrune"):
+                continue
+            path = Path(str(directory["path"]))
+            if output_root is None or path == output_root:
+                continue
+            try:
+                path.rmdir()
+            except OSError:
+                continue
+            deleted_directories.append(str(path))
+
+        return {
+            "deletedFiles": deleted_files,
+            "deletedDirectories": deleted_directories,
+            "freedBytes": freed_bytes,
+            "failedFiles": failed_files,
+            "protectedFiles": [
+                item for item in inventory["protectedFiles"]
+                if item["exists"]
+            ],
+        }
+
+    def clear_task_results(self, task_id: str) -> dict[str, int]:
+        task = self.get_task(task_id)
+        if task is None:
+            raise ValidationError("TASK_NOT_FOUND", f"task {task_id} was not found")
+        tables = (
+            "task_items",
+            "task_batches",
+            "policy_documents",
+            "task_artifacts",
+            "processing_runs",
+        )
+        counts: dict[str, int] = {}
+        with self.connection:
+            for table in tables:
+                counts[table] = int(
+                    self.connection.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE task_id = ?",
+                        (task_id,),
+                    ).fetchone()[0]
+                )
+                self.connection.execute(
+                    f"DELETE FROM {table} WHERE task_id = ?",
+                    (task_id,),
+                )
+        from .policy import safe_filename
+
+        scan_journal = (
+            self.database_path.parent
+            / "cache"
+            / "task-scans"
+            / f"{safe_filename(task_id, 80)}.jsonl"
+        )
+        try:
+            scan_journal.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return counts
+
     def update_task_input(
         self,
         task_id: str,
