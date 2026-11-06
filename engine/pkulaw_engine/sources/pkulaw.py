@@ -415,6 +415,9 @@ class PkulawAdapter:
             session.query != request.query
             or session.library != request.library
             or session.match_mode != request.match_mode
+            or session.province != request.province
+            or session.timeliness != request.timeliness
+            or session.requested_page_size != request.requested_page_size
         ):
             raise YearFilterUnavailable(
                 "当前检索会话与目标年份筛选不兼容"
@@ -439,13 +442,13 @@ class PkulawAdapter:
             require_page_size=True,
             require_ungrouped=True,
         )
-        self.current_search_request = target_request
-        self.current_search_session = session
-        self.search_url = str(session.url or state.get("url") or "")
         if int(state.get("page") or 0) != 1:
             raise YearFilterUnavailable(
                 f"公布年份切换后未回到第 1 页：{state.get('page')}"
             )
+        self.current_search_request = target_request
+        self.current_search_session = session
+        self.search_url = str(session.url or state.get("url") or "")
         return state
 
     def read_results(self) -> dict[str, Any]:

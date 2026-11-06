@@ -1708,6 +1708,67 @@ class PkulawAdapterOperationTests(unittest.TestCase):
         with self.assertRaises(YearFilterUnavailable):
             self.adapter.select_year(year="2022")
 
+    def test_select_year_rejects_other_identity_mismatches(self) -> None:
+        mismatches = [
+            ("province", "北京市"),
+            ("timeliness", "现行有效"),
+            ("requested_page_size", 100),
+        ]
+        for field, value in mismatches:
+            with self.subTest(field=field):
+                request = self._request()
+                session = replace(self._session(request), **{field: value})
+                self.adapter.current_search_request = request
+                self.adapter.current_search_session = session
+                with self.assertRaises(YearFilterUnavailable):
+                    self.adapter.select_year(year="2022")
+
+    def test_select_year_does_not_mutate_on_non_first_page(self) -> None:
+        request = self._request(year="全部年份")
+        session = self._session(request)
+        self.adapter.current_search_request = request
+        self.adapter.current_search_session = session
+        self.adapter.search_url = session.url
+        wrong_page_state = {
+            "page": 2,
+            "totalPages": 2,
+            "rows": [],
+            "url": "https://example.test/search?year=2022&page=2",
+            "searchSession": replace(
+                session,
+                year="2022",
+                actual_year="2022",
+                page=2,
+            ).to_dict(),
+        }
+        with (
+            patch.object(
+                self.adapter,
+                "read_results",
+                return_value={"page": 1, "totalPages": 1, "rows": []},
+            ),
+            patch.object(
+                self.adapter,
+                "_run_refinement",
+                return_value=(
+                    replace(
+                        session,
+                        year="2022",
+                        actual_year="2022",
+                        page=2,
+                    ),
+                    wrong_page_state,
+                    {"ok": True, "changed": True},
+                ),
+            ),
+        ):
+            with self.assertRaises(YearFilterUnavailable):
+                self.adapter.select_year(year="2022")
+
+        self.assertEqual(self.adapter.current_search_request.year, "全部年份")
+        self.assertEqual(self.adapter.current_search_session.year, "全部年份")
+        self.assertEqual(self.adapter.search_url, session.url)
+
     def test_select_year_rejects_unavailable_year(self) -> None:
         request = self._request(year="全部年份")
         session = self._session(request)
