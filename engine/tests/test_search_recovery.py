@@ -8,6 +8,7 @@ from pkulaw_engine.search_recovery import (
     PendingSearchAction,
     SearchRecoveryBoundaryRequired,
     build_pending_search_action,
+    pending_action_for_request,
     pending_action_from_checkpoint,
     pending_action_to_checkpoint,
 )
@@ -76,6 +77,60 @@ class PendingSearchActionTests(unittest.TestCase):
         self.assertEqual(payload["attemptCount"], 1)
         self.assertEqual(payload["request"]["query"], "人工智能")
         self.assertNotIn("action_id", payload)
+
+    def test_checkpoint_supplies_pending_action_for_same_result_scope(
+        self,
+    ) -> None:
+        target = {"year": "2024"}
+        request = self.action.request
+        action = build_pending_search_action(
+            task_id="task-1",
+            kind="year-filter-switch",
+            request=request,
+            expected_page=1,
+            previous_result_signature="previous",
+            target=target,
+        )
+
+        restored = pending_action_for_request(
+            {
+                "searchRecovery": {
+                    "action": pending_action_to_checkpoint(action),
+                }
+            },
+            request=request,
+            expected_page=1,
+            target=target,
+        )
+
+        self.assertEqual(restored, action)
+        self.assertEqual(restored.kind, "year-filter-switch")
+
+    def test_checkpoint_does_not_supply_action_for_other_scope(
+        self,
+    ) -> None:
+        request = self.action.request
+        action = build_pending_search_action(
+            task_id="task-1",
+            kind="year-filter-switch",
+            request=request,
+            expected_page=1,
+            previous_result_signature="previous",
+            target={"year": "2024"},
+        )
+
+        restored = pending_action_for_request(
+            {
+                "searchRecovery": {
+                    "action": pending_action_to_checkpoint(action),
+                }
+            },
+            request=request,
+            expected_page=1,
+            target={"year": "2022"},
+        )
+
+        self.assertIsNone(restored)
 
 
 class FakeClock:
@@ -220,6 +275,34 @@ class CheckpointedActionResultRunnerTests(unittest.TestCase):
             "same-action-captcha",
         )
 
+    def test_captcha_reappearing_during_reuse_observation_reaches_boundary(
+        self,
+    ) -> None:
+        execute_calls = 0
+
+        def execute() -> dict[str, object]:
+            nonlocal execute_calls
+            execute_calls += 1
+            raise ManualActionRequired("captcha")
+
+        with self.assertRaises(SearchRecoveryBoundaryRequired):
+            self._runner().run(
+                self.action,
+                execute=execute,
+                observe=lambda: (_ for _ in ()).throw(
+                    ManualActionRequired("captcha reappeared")
+                ),
+                wait_for_manual=lambda *_args: True,
+            )
+
+        self.assertEqual(execute_calls, 1)
+        recovery = self.store.task["checkpoint"]["searchRecovery"]
+        self.assertEqual(recovery["phase"], "boundary")
+        self.assertEqual(
+            recovery["breakerReason"],
+            "same-action-captcha",
+        )
+
     def test_runner_restore_observes_pending_action_before_execute(
         self,
     ) -> None:
@@ -266,6 +349,101 @@ class CheckpointedActionResultRunnerTests(unittest.TestCase):
         self.assertEqual(first_calls, 1)
         self.assertEqual(execute_calls, 0)
         self.assertEqual(result["page"], 1)
+
+    def test_restored_pending_action_reuses_result_after_rebuild(
+        self,
+    ) -> None:
+        first_calls = 0
+
+        def first_execute() -> dict[str, object]:
+            nonlocal first_calls
+            first_calls += 1
+            raise ManualActionRequired("captcha")
+
+        with self.assertRaises(ManualActionRequired):
+            self._runner().run(
+                self.action,
+                execute=first_execute,
+                observe=lambda: None,
+                wait_for_manual=lambda *_args: (_ for _ in ()).throw(
+                    ManualActionRequired("captcha still visible")
+                ),
+            )
+
+        rebuilt = PendingSearchAction(
+            action_id=self.action.action_id,
+            kind=self.action.kind,
+            request=self.action.request,
+            expected_page=self.action.expected_page,
+            previous_result_signature=self.action.previous_result_signature,
+            target=self.action.target,
+            attempt_count=self.action.attempt_count,
+            created_at="2026-11-07T00:00:00Z",
+        )
+        execute_calls = 0
+
+        def execute() -> dict[str, object]:
+            nonlocal execute_calls
+            execute_calls += 1
+            return {"page": 1}
+
+        result = self._runner().run(
+            rebuilt,
+            execute=execute,
+            observe=lambda: {
+                "page": 1,
+                "searchSession": {"query": "人工智能"},
+            },
+            wait_for_manual=lambda *_args: True,
+        )
+
+        self.assertEqual(first_calls, 1)
+        self.assertEqual(execute_calls, 0)
+        self.assertEqual(result["page"], 1)
+
+    def test_interrupted_retry_does_not_execute_a_third_time(
+        self,
+    ) -> None:
+        retry_action = PendingSearchAction(
+            action_id=self.action.action_id,
+            kind=self.action.kind,
+            request=self.action.request,
+            expected_page=self.action.expected_page,
+            previous_result_signature=self.action.previous_result_signature,
+            target=self.action.target,
+            attempt_count=1,
+            created_at=self.action.created_at,
+        )
+        self.store.task["checkpoint"] = {
+            "searchRecovery": {
+                "phase": "retrying",
+                "eventId": "recovery-1",
+                "action": pending_action_to_checkpoint(retry_action),
+                "governor": self.governor.snapshot(),
+            }
+        }
+        execute_calls = 0
+
+        def execute() -> dict[str, object]:
+            nonlocal execute_calls
+            execute_calls += 1
+            return {"page": 1}
+
+        with self.assertRaises(SearchRecoveryBoundaryRequired):
+            self._runner().run(
+                self.action,
+                execute=execute,
+                observe=lambda: None,
+                wait_for_manual=lambda *_args: True,
+            )
+
+        self.assertEqual(execute_calls, 0)
+        recovery = self.store.task["checkpoint"]["searchRecovery"]
+        self.assertEqual(recovery["phase"], "boundary")
+        self.assertEqual(
+            recovery["breakerReason"],
+            "automatic-retry-already-attempted",
+        )
 
 
 if __name__ == "__main__":

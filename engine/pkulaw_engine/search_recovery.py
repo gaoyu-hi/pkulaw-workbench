@@ -5,7 +5,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Mapping
 
 from .sources.search_transaction import (
     SearchRequestIdentity,
@@ -177,6 +177,35 @@ def pending_action_from_checkpoint(
     )
 
 
+def pending_action_for_request(
+    checkpoint: Any,
+    *,
+    request: SearchRequestIdentity,
+    expected_page: int,
+    target: Mapping[str, Any],
+) -> PendingSearchAction | None:
+    if not isinstance(checkpoint, dict):
+        return None
+    recovery = checkpoint.get("searchRecovery")
+    if not isinstance(recovery, dict):
+        return None
+    action = pending_action_from_checkpoint(recovery.get("action"))
+    if action is None:
+        return None
+    if action.kind not in {
+        "keyword-submission",
+        "year-filter-switch",
+    }:
+        return None
+    if (
+        action.request != request
+        or action.expected_page != int(expected_page)
+        or action.target != dict(target)
+    ):
+        return None
+    return action
+
+
 def restore_governor_state(
     governor: Any,
     snapshot: Any,
@@ -266,32 +295,37 @@ class CheckpointedActionResultRunner:
         pending = pending_action_from_checkpoint(
             recovery.get("action")
         )
-        if (
-            pending == action
-            and str(recovery.get("phase") or "")
-            in {"waiting", "observing", "retrying"}
-        ):
+        phase = str(recovery.get("phase") or "")
+        if pending is not None and pending.action_id == action.action_id:
+            action = pending
+            if phase == "boundary":
+                self._finish_boundary(action)
             try:
                 observed = observe()
             except Exception as exc:
                 if not _is_access_error(exc):
                     raise
-                self._save(
-                    phase="waiting",
-                    action=action,
-                    event_id=str(
-                        recovery.get("eventId")
-                        or f"recovery-{uuid.uuid4()}"
-                    ),
-                    attempt_count=action.attempt_count,
-                )
-                wait_for_manual(
-                    manual_wait_reason(action),
-                    _wait_status(exc),
-                    str(self._recovery().get("eventId") or ""),
+                if action.attempt_count >= 1 or phase in {
+                    "completed",
+                    "reused",
+                }:
+                    if _is_captcha(exc):
+                        self._record_captcha(action.action_id)
+                    self._finish_boundary(
+                        action,
+                        reason=(
+                            "automatic-retry-already-attempted"
+                            if action.attempt_count >= 1
+                            else "completed-action-result-not-observed"
+                        ),
+                    )
+                return self._recover_after_wait(
                     action,
+                    first_error=exc,
+                    execute=execute,
+                    observe=observe,
+                    wait_for_manual=wait_for_manual,
                 )
-                observed = observe()
             if observed is not None:
                 self._record_completed(action.action_id)
                 return self._finish(
@@ -300,13 +334,23 @@ class CheckpointedActionResultRunner:
                     attempt_count=action.attempt_count,
                     reused=True,
                 )
+            if action.attempt_count >= 1:
+                self._finish_boundary(
+                    action,
+                    reason="automatic-retry-already-attempted",
+                )
+            if phase in {"completed", "reused"}:
+                self._finish_boundary(
+                    action,
+                    reason="completed-action-result-not-observed",
+                )
 
         self._start(action)
         self._save(
             phase="prepared",
             action=action,
             event_id=f"recovery-{uuid.uuid4()}",
-            attempt_count=0,
+            attempt_count=action.attempt_count,
         )
         try:
             state = execute()
@@ -324,7 +368,7 @@ class CheckpointedActionResultRunner:
         return self._finish(
             action,
             state,
-            attempt_count=0,
+            attempt_count=action.attempt_count,
             reused=False,
         )
 
@@ -386,7 +430,10 @@ class CheckpointedActionResultRunner:
 
         if captcha:
             self._clear_captcha(action.action_id)
-        observed = observe()
+        observed = self._observe_after_manual(
+            action,
+            observe,
+        )
         if observed is not None:
             self._record_completed(action.action_id)
             return self._finish(
@@ -434,6 +481,21 @@ class CheckpointedActionResultRunner:
             reused=False,
         )
 
+    def _observe_after_manual(
+        self,
+        action: PendingSearchAction,
+        observe: Callable[[], dict[str, Any] | None],
+    ) -> dict[str, Any] | None:
+        try:
+            return observe()
+        except Exception as exc:
+            if not _is_access_error(exc):
+                raise
+            if _is_captcha(exc):
+                self._record_captcha(action.action_id)
+                self._finish_boundary(action)
+            raise
+
     def _finish(
         self,
         action: PendingSearchAction,
@@ -456,10 +518,16 @@ class CheckpointedActionResultRunner:
         )
         return state
 
-    def _finish_boundary(self, action: PendingSearchAction) -> None:
+    def _finish_boundary(
+        self,
+        action: PendingSearchAction,
+        *,
+        reason: str = "",
+    ) -> None:
         snapshot = self._snapshot()
         reason = str(
-            snapshot.get("breaker_reason")
+            reason
+            or snapshot.get("breaker_reason")
             or "repeated-captcha-boundary"
         )
         self._save(

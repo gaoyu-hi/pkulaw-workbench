@@ -86,11 +86,21 @@ class CaptureBoundaryManagerTestBase:
 
     def test_continue_writes_fallback_confirmation_and_clears_error(self) -> None:
         task = self.make_task()
+        checkpoint = dict(task["checkpoint"])
+        checkpoint["searchRecovery"] = {
+            "phase": "boundary",
+            "action": {"actionId": "previous-captcha-action"},
+        }
+        self.store.update_task(
+            str(task["id"]),
+            checkpoint=checkpoint,
+        )
         details = self.manager.continue_capture_boundary(str(task["id"]))
         updated = details["task"]
         adaptive = updated["checkpoint"]["adaptiveSearch"]
         self.assertEqual(adaptive["fallbackMode"], "A")
         self.assertTrue(adaptive["boundary"]["confirmedAt"])
+        self.assertNotIn("searchRecovery", updated["checkpoint"])
         self.assertIsNone(updated["error"])
         self.assertEqual(updated["status"], "waiting_manual")
 

@@ -46,6 +46,7 @@ from .search_recovery import (
     SearchRecoveryUnconfirmed,
     build_pending_search_action,
     observe_adapter_action,
+    pending_action_for_request,
     restore_governor_state,
 )
 from .search_governor import SearchActionGovernor, SearchActionKind
@@ -501,6 +502,7 @@ class SingleTaskManager:
                 }
             )
             checkpoint["adaptiveSearch"] = adaptive
+            checkpoint.pop("searchRecovery", None)
             self._update_task(
                 store,
                 task_id,
@@ -2798,29 +2800,40 @@ class SingleTaskManager:
                 and request.requested_page_size == config.page_size
             )
 
+        target = {
+            "year": combination.year,
+            "partitionKey": combination.partition_key,
+        }
+        saved_action = pending_action_for_request(
+            dict((store.get_task(task_id) or {}).get("checkpoint") or {}),
+            request=request,
+            expected_page=1,
+            target=target,
+        )
         effective_kind: SearchActionKind = (
-            "year-filter-switch"
-            if (
-                requested_kind == "year-filter-switch"
-                and can_reuse_session_for_year()
+            saved_action.kind
+            if saved_action is not None
+            else (
+                "year-filter-switch"
+                if (
+                    requested_kind == "year-filter-switch"
+                    and can_reuse_session_for_year()
+                )
+                else "keyword-submission"
             )
-            else "keyword-submission"
         )
         previous_signature = (
             adapter.current_search_session.result_signature
             if adapter.current_search_session is not None
             else ""
         )
-        action = build_pending_search_action(
+        action = saved_action or build_pending_search_action(
             task_id=task_id,
             kind=effective_kind,
             request=request,
             expected_page=1,
             previous_result_signature=previous_signature,
-            target={
-                "year": combination.year,
-                "partitionKey": combination.partition_key,
-            },
+            target=target,
         )
 
         def execute() -> dict[str, Any]:
@@ -2830,10 +2843,7 @@ class SingleTaskManager:
                 task_id,
                 current_action="search",
             )
-            if (
-                effective_kind == "year-filter-switch"
-                and can_reuse_session_for_year()
-            ):
+            if action.kind == "year-filter-switch":
                 return adapter.select_year(year=combination.year)
             return adapter.search(
                 keyword=combination.query,
