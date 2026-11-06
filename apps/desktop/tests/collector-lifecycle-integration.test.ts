@@ -126,6 +126,21 @@ function buttonByText(
     .find((item) => item.text.includes(text))?.node;
 }
 
+function taskButtonByText(
+  renderer: TestRenderer.ReactTestRenderer,
+  text: string
+) {
+  return renderer.root
+    .findAllByType("button")
+    .find((button) =>
+      button.findAllByType("span").some((span) =>
+        String(span.children.map((child) => String(child)).join("")).includes(
+          text
+        )
+      )
+    );
+}
+
 describe("collector lifecycle integration", () => {
   const pkulaw = {
     listTasks: vi.fn(),
@@ -232,6 +247,17 @@ describe("collector lifecycle integration", () => {
     const textareas = active.root.findAllByType("textarea");
     expect(String(textareas[0]?.props.value ?? "")).toBe("");
     expect(JSON.stringify(active.toJSON())).toContain("逐篇任务 task-1");
+
+    pkulaw.getTaskDetails.mockClear();
+    const historyButton = taskButtonByText(active, "逐篇任务 task-1");
+    await act(async () => {
+      historyButton?.props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(pkulaw.getTaskDetails).toHaveBeenCalledWith("task-1");
+    expect(JSON.stringify(active.toJSON())).toContain("已完成");
+
     renderer?.unmount();
   });
 
@@ -278,6 +304,17 @@ describe("collector lifecycle integration", () => {
     const textareas = active.root.findAllByType("textarea");
     expect(String(textareas[0]?.props.value ?? "")).toBe("");
     expect(JSON.stringify(active.toJSON())).toContain("批量任务 task-1");
+
+    pkulaw.getBatchTaskDetails.mockClear();
+    const historyButton = taskButtonByText(active, "批量任务 task-1");
+    await act(async () => {
+      historyButton?.props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(pkulaw.getBatchTaskDetails).toHaveBeenCalledWith("task-1");
+    expect(JSON.stringify(active.toJSON())).toContain("已完成");
+
     renderer?.unmount();
   });
 
@@ -324,6 +361,8 @@ describe("collector lifecycle integration", () => {
     await act(async () => {
       await dialog.props.onCommit("preserve");
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(pkulaw.commitTaskSettingsRevision).toHaveBeenCalledWith(
@@ -332,6 +371,8 @@ describe("collector lifecycle integration", () => {
       "preserve",
       expect.any(String)
     );
+    expect(active.root.findAllByType(TaskSettingsRevisionDialog)).toHaveLength(0);
+    expect(JSON.stringify(active.toJSON())).toContain("运行中");
     renderer?.unmount();
   });
 
@@ -379,6 +420,8 @@ describe("collector lifecycle integration", () => {
     await act(async () => {
       await dialog.props.onCommit("delete");
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(pkulaw.commitTaskSettingsRevision).toHaveBeenCalledWith(
@@ -387,6 +430,8 @@ describe("collector lifecycle integration", () => {
       "delete",
       expect.any(String)
     );
+    expect(active.root.findAllByType(TaskSettingsRevisionDialog)).toHaveLength(0);
+    expect(JSON.stringify(active.toJSON())).toContain("运行中");
     renderer?.unmount();
   });
 
@@ -430,6 +475,8 @@ describe("collector lifecycle integration", () => {
     await act(async () => {
       await dialog.props.onCommit("preserve");
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(pkulaw.commitTaskSettingsRevision).toHaveBeenCalledWith(
@@ -438,6 +485,8 @@ describe("collector lifecycle integration", () => {
       "preserve",
       expect.any(String)
     );
+    expect(active.root.findAllByType(TaskSettingsRevisionDialog)).toHaveLength(0);
+    expect(JSON.stringify(active.toJSON())).toContain("运行中");
     renderer?.unmount();
   });
 
@@ -485,6 +534,8 @@ describe("collector lifecycle integration", () => {
     await act(async () => {
       await dialog.props.onCommit("delete");
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(pkulaw.commitTaskSettingsRevision).toHaveBeenCalledWith(
@@ -493,6 +544,8 @@ describe("collector lifecycle integration", () => {
       "delete",
       expect.any(String)
     );
+    expect(active.root.findAllByType(TaskSettingsRevisionDialog)).toHaveLength(0);
+    expect(JSON.stringify(active.toJSON())).toContain("运行中");
     renderer?.unmount();
   });
 });
