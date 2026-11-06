@@ -162,6 +162,7 @@ export default function BatchCollectorPanel({
   const [pauseDetailOpen, setPauseDetailOpen] = useState(false);
   const startInFlightRef = useRef(false);
   const settingsInFlightRef = useRef(false);
+  const taskActionInFlightRef = useRef(false);
   const autoLoad = useCollectorAutoLoad();
   const [notice, setNotice] = useState(
     "批量任务会先确认页数和规模，再使用当前内置浏览器执行受控下载。"
@@ -621,6 +622,8 @@ export default function BatchCollectorPanel({
       | "retry"
   ): Promise<void> {
     if (!selectedTaskId) return;
+    if (taskActionInFlightRef.current) return;
+    taskActionInFlightRef.current = true;
     setBusy(true);
     setActionFeedback({
       status: "processing",
@@ -695,6 +698,7 @@ export default function BatchCollectorPanel({
         message: `任务操作失败：${String(error)}`
       });
     } finally {
+      taskActionInFlightRef.current = false;
       setBusy(false);
     }
   }

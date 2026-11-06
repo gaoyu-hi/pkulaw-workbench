@@ -167,6 +167,7 @@ export default function SingleCollectorPanel({
   const [pauseDetailOpen, setPauseDetailOpen] = useState(false);
   const startInFlightRef = useRef(false);
   const settingsInFlightRef = useRef(false);
+  const taskActionInFlightRef = useRef(false);
   const autoLoad = useCollectorAutoLoad();
   const [notice, setNotice] = useState(
     "任务会使用当前内置浏览器，不保存账号密码，不绕过登录、滑块或机构额度。"
@@ -641,6 +642,8 @@ export default function SingleCollectorPanel({
       | "retry"
   ): Promise<void> {
     if (!selectedTaskId) return;
+    if (taskActionInFlightRef.current) return;
+    taskActionInFlightRef.current = true;
     setBusy(true);
     setActionFeedback({
       status: "processing",
@@ -715,6 +718,7 @@ export default function SingleCollectorPanel({
         message: `任务操作失败：${String(error)}`
       });
     } finally {
+      taskActionInFlightRef.current = false;
       setBusy(false);
     }
   }

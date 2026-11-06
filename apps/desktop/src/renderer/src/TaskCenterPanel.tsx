@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AppInfo,
   BackendState,
@@ -106,6 +106,7 @@ export default function TaskCenterPanel({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [cleanupPreview, setCleanupPreview] = useState<CleanupPreview | null>(null);
   const [busy, setBusy] = useState(false);
+  const taskActionInFlightRef = useRef(false);
   const [notice, setNotice] = useState("选择任务查看逐条状态、失败原因和可恢复操作。");
 
   async function refreshTasks(): Promise<TaskRecord[]> {
@@ -336,6 +337,8 @@ export default function TaskCenterPanel({
       | "retry"
   ): Promise<void> {
     if (!selectedTask) return;
+    if (taskActionInFlightRef.current) return;
+    taskActionInFlightRef.current = true;
     setBusy(true);
     try {
       if (action === "start" || action === "retry") {
@@ -402,6 +405,7 @@ export default function TaskCenterPanel({
     } catch (error) {
       setNotice(`任务操作失败：${String(error)}`);
     } finally {
+      taskActionInFlightRef.current = false;
       setBusy(false);
     }
   }

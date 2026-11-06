@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import BatchCollectorPanel from "../src/renderer/src/BatchCollectorPanel";
 import SingleCollectorPanel from "../src/renderer/src/SingleCollectorPanel";
 import TaskSettingsRevisionDialog from "../src/renderer/src/TaskSettingsRevisionDialog";
-import type { TaskSettingsRevisionPreview } from "../src/shared/protocol";
+import type {
+  ProtocolError,
+  TaskSettingsRevisionPreview
+} from "../src/shared/protocol";
 
 const browser = {
   status: "ready",
@@ -74,7 +77,11 @@ function taskRecord(
   };
 }
 
-function taskDetails(mode: "single" | "batch", status: string) {
+function taskDetails(
+  mode: "single" | "batch",
+  status: string,
+  error: ProtocolError | null = null
+) {
   const task = taskRecord("task-1", mode, status);
   return {
     task: {
@@ -97,7 +104,7 @@ function taskDetails(mode: "single" | "batch", status: string) {
       progress: status === "completed" ? 1 : 0.5,
       currentStage: status,
       updatedAt: "2026-11-06T10:00:00Z",
-      error: null
+      error
     },
     items: [],
     batches: []
@@ -546,6 +553,50 @@ describe("collector lifecycle integration", () => {
     );
     expect(active.root.findAllByType(TaskSettingsRevisionDialog)).toHaveLength(0);
     expect(JSON.stringify(active.toJSON())).toContain("运行中");
+    renderer?.unmount();
+  });
+
+  it("single boundary continue submits exactly one engine call on rapid double click", async () => {
+    pkulaw.listTasks.mockResolvedValue([
+      taskRecord("task-1", "single", "waiting_manual")
+    ]);
+    const boundaryDetails = taskDetails("single", "waiting_manual", {
+      code: "CAPTURE_BOUNDARY_REACHED",
+      message: "已达到物理采集边界"
+    });
+    pkulaw.getTaskDetails.mockResolvedValue(boundaryDetails);
+    pkulaw.continueCaptureBoundary.mockResolvedValue(
+      taskDetails("single", "running")
+    );
+
+    let renderer: TestRenderer.ReactTestRenderer | undefined;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(SingleCollectorPanel, {
+          appInfo: { defaultSingleOutputDir: "D:/输出" } as never,
+          backend: { status: "ready" } as never,
+          onOpenBrowser: vi.fn()
+        })
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const active = renderer as TestRenderer.ReactTestRenderer;
+    const boundaryButton = buttonByText(active, "继续完整补采");
+    expect(boundaryButton).toBeDefined();
+
+    act(() => {
+      (boundaryButton?.props.onClick as () => void)?.();
+      (boundaryButton?.props.onClick as () => void)?.();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(pkulaw.continueCaptureBoundary).toHaveBeenCalledTimes(1);
     renderer?.unmount();
   });
 });
