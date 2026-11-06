@@ -13,6 +13,7 @@ export interface TaskWorkspaceFrameProps {
   pauseDetailOpen: boolean;
   manualRecovery: ManualRecoveryView;
   onToggleSettings: () => void;
+  decisionDialog?: ReactNode;
 }
 
 export default function TaskWorkspaceFrame({
@@ -23,7 +24,8 @@ export default function TaskWorkspaceFrame({
   settingsOpen,
   pauseDetailOpen,
   manualRecovery,
-  onToggleSettings
+  onToggleSettings,
+  decisionDialog
 }: TaskWorkspaceFrameProps): React.JSX.Element {
   const modeLabel = mode === "single" ? "逐篇采集" : "批量采集";
   const browserVisible = !settingsOpen && !pauseDetailOpen;
@@ -67,6 +69,7 @@ export default function TaskWorkspaceFrame({
           onContinue={() => void window.pkulaw.browserContinue()}
         />
       </div>
+      {decisionDialog}
     </section>
   );
 }

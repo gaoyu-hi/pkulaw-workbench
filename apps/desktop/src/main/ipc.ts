@@ -15,6 +15,7 @@ import type {
   TaskDetails,
   TaskPreviewSummary,
   TaskRecord,
+  TaskSettingsRevisionPreview,
   TaskSettingsUpdateResult,
   PurgeResult
 } from "../shared/protocol";
@@ -374,6 +375,70 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
     }
   );
   ipcMain.handle(
+    "tasks:prepare-settings-revision",
+    async (
+      _event,
+      payload: {
+        taskId?: unknown;
+        input?: unknown;
+        operationId?: unknown;
+      }
+    ) => {
+      if (!payload || typeof payload !== "object") {
+        throw new Error("task settings payload is required");
+      }
+      if (!payload.input || typeof payload.input !== "object") {
+        throw new Error("task settings input must be an object");
+      }
+      const taskInput = payload.input as Record<string, unknown>;
+      const requestedOutput = String(taskInput.outputDir || "").trim();
+      if (!requestedOutput) {
+        throw new Error("outputDir must be a non-empty string");
+      }
+      const outputDir = await ensureWritableDirectory(requestedOutput);
+      const result = await pythonService.request(
+        "task.prepare-settings-revision",
+        {
+          taskId: assertTaskId(payload.taskId),
+          input: { ...taskInput, outputDir },
+          outputDir
+        }
+      );
+      return result as unknown as TaskSettingsRevisionPreview;
+    }
+  );
+  ipcMain.handle(
+    "tasks:commit-settings-revision",
+    async (
+      _event,
+      payload: {
+        taskId?: unknown;
+        token?: unknown;
+        artifactPolicy?: unknown;
+        operationId?: unknown;
+      }
+    ) => {
+      if (!payload || typeof payload !== "object") {
+        throw new Error("task settings commit payload is required");
+      }
+      const artifactPolicy = String(payload.artifactPolicy || "");
+      if (artifactPolicy !== "preserve" && artifactPolicy !== "delete") {
+        throw new Error("artifactPolicy must be preserve or delete");
+      }
+      const result = await pythonService.request(
+        "task.commit-settings-revision",
+        {
+          taskId: assertTaskId(payload.taskId),
+          token: String(payload.token || ""),
+          artifactPolicy,
+          operationId: requiredOperationId(payload.operationId)
+        },
+        60_000
+      );
+      return result as unknown as TaskSettingsUpdateResult;
+    }
+  );
+  ipcMain.handle(
     "tasks:archive",
     async (_event, input: { taskIds?: unknown; reason?: unknown }) => {
       const result = await pythonService.request("task.archive", {
@@ -665,6 +730,8 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
       "tasks:continue-capture-boundary",
       "tasks:resume-after-manual",
       "tasks:apply-settings",
+      "tasks:prepare-settings-revision",
+      "tasks:commit-settings-revision",
       "tasks:archive",
       "tasks:restore",
       "tasks:cleanup-preview",

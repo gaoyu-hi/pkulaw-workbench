@@ -18,6 +18,7 @@ import type {
   TaskDetails,
   TaskPreviewSummary,
   TaskRecord,
+  TaskSettingsRevisionPreview,
   TaskSettingsUpdateResult,
   PurgeResult
 } from "../shared/protocol";
@@ -67,6 +68,25 @@ const api: DesktopApi = {
     ipcRenderer.invoke(
       "tasks:apply-settings",
       { taskId, input, operationId }
+    ) as Promise<TaskSettingsUpdateResult>,
+  prepareTaskSettingsRevision: (
+    taskId: string,
+    input: Record<string, unknown>,
+    operationId: string
+  ) =>
+    ipcRenderer.invoke(
+      "tasks:prepare-settings-revision",
+      { taskId, input, operationId }
+    ) as Promise<TaskSettingsRevisionPreview>,
+  commitTaskSettingsRevision: (
+    taskId: string,
+    token: string,
+    artifactPolicy: "preserve" | "delete",
+    operationId: string
+  ) =>
+    ipcRenderer.invoke(
+      "tasks:commit-settings-revision",
+      { taskId, token, artifactPolicy, operationId }
     ) as Promise<TaskSettingsUpdateResult>,
   startSingleTask: (taskId: string, operationId?: string) =>
     ipcRenderer.invoke("single:start", taskId, operationId) as Promise<TaskDetails>,

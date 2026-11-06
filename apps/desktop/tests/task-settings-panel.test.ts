@@ -41,7 +41,7 @@ describe("TaskSettingsPanel", () => {
     expect(markup).toContain("人工智能");
     expect(markup).toContain("数据安全");
     expect(markup).toContain('value="1999"');
-    expect(markup).toContain("应用设置");
+    expect(markup).toContain("保存修改");
     expect(markup).toContain("关闭");
     expect(markup).not.toContain("创建并开始");
   });
@@ -155,7 +155,7 @@ describe("TaskSettingsPanel", () => {
       })
     );
 
-    expect(markup).toContain("正在应用设置");
+    expect(markup).toContain("正在保存修改");
     expect(markup.match(/disabled=""/g)?.length || 0).toBeGreaterThan(2);
   });
 
@@ -177,7 +177,7 @@ describe("TaskSettingsPanel", () => {
     );
     const bodyIndex = markup.indexOf("collector-form-body");
     const footerIndex = markup.indexOf("collector-action-footer");
-    const applyIndex = markup.indexOf("应用设置");
+    const applyIndex = markup.indexOf("保存修改");
 
     expect(markup).toContain("collector-form-shell");
     expect(markup).toContain("collector-year-row");

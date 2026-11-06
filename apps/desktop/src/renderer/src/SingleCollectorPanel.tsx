@@ -10,6 +10,7 @@ import type {
   TaskItemCandidate,
   TaskItemRecord,
   TaskRecord,
+  TaskSettingsRevisionPreview,
   YearSelection
 } from "../../shared/protocol";
 import YearRangeControl, {
@@ -58,7 +59,11 @@ import { usePersistentState } from "./usePersistentState";
 import TaskWorkspaceFrame from "./TaskWorkspaceFrame";
 import { useManualRecovery } from "./useManualRecovery";
 import TaskSettingsPanel from "./TaskSettingsPanel";
+import TaskSettingsRevisionDialog, {
+  type ArtifactDisposition
+} from "./TaskSettingsRevisionDialog";
 import {
+  canOpenTaskSettings,
   resetSingleCollectorForm,
   useCollectorAutoLoad
 } from "./collector-reset";
@@ -154,6 +159,8 @@ export default function SingleCollectorPanel({
   const [actionFeedback, setActionFeedback] =
     useState<TaskActionFeedback | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsRevision, setSettingsRevision] =
+    useState<TaskSettingsRevisionPreview | null>(null);
   const [pauseDetailOpen, setPauseDetailOpen] = useState(false);
   const startInFlightRef = useRef(false);
   const settingsInFlightRef = useRef(false);
@@ -563,6 +570,61 @@ export default function SingleCollectorPanel({
     }
   }
 
+  async function prepareSettings(
+    nextInput: Record<string, unknown>
+  ): Promise<void> {
+    if (!details || settingsInFlightRef.current) return;
+    settingsInFlightRef.current = true;
+    setBusy(true);
+    try {
+      const preview = await window.pkulaw.prepareTaskSettingsRevision(
+        details.task.id,
+        nextInput,
+        newOperationId()
+      );
+      if (!preview.changed) {
+        setSettingsOpen(false);
+        setNotice("任务设置没有变化，任务保持原运行状态。");
+        return;
+      }
+      setSettingsRevision(preview);
+    } catch (error) {
+      setNotice(`生成任务设置修订失败：${String(error)}`);
+      throw error;
+    } finally {
+      settingsInFlightRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function commitSettings(policy: ArtifactDisposition): Promise<void> {
+    if (!details || !settingsRevision || settingsInFlightRef.current) return;
+    settingsInFlightRef.current = true;
+    setBusy(true);
+    try {
+      const result = await window.pkulaw.commitTaskSettingsRevision(
+        details.task.id,
+        settingsRevision.token,
+        policy,
+        newOperationId()
+      );
+      setDetails(result.details as TaskDetails);
+      setSelectedTaskId(result.task.id);
+      setSettingsRevision(null);
+      setSettingsOpen(false);
+      setNotice(
+        `任务设置已保存，配置版本 ${result.generation} 已从新扫描起点运行。`
+      );
+      await refreshTaskList();
+    } catch (error) {
+      setNotice(`保存任务设置失败：${String(error)}`);
+      throw error;
+    } finally {
+      settingsInFlightRef.current = false;
+      setBusy(false);
+    }
+  }
+
   async function control(
     action:
       | "pause"
@@ -872,6 +934,7 @@ export default function SingleCollectorPanel({
       }}
       busy={busy}
       onApply={applySettings}
+      onPrepare={prepareSettings}
       onClose={() => setSettingsOpen(false)}
     />
   ) : null;
@@ -1079,6 +1142,13 @@ export default function SingleCollectorPanel({
         onToggleSettings={() => {
           if (
             !settingsOpen &&
+            !canOpenTaskSettings(details?.task.status)
+          ) {
+            setNotice("请先暂停任务，再手动打开任务设置。");
+            return;
+          }
+          if (
+            !settingsOpen &&
             (browser?.captchaVisible ||
               browser?.loginVisible ||
               ["waiting", "observing", "verifying", "resuming"].includes(
@@ -1092,17 +1162,37 @@ export default function SingleCollectorPanel({
         }}
         settingsPanel={taskSettingsPanel || settingsPanel}
         taskPanel={taskPanel}
+        decisionDialog={
+          settingsRevision ? (
+            <TaskSettingsRevisionDialog
+              preview={settingsRevision}
+              busy={busy}
+              onCommit={commitSettings}
+              onCancel={() => setSettingsRevision(null)}
+            />
+          ) : undefined
+        }
       />
     );
   }
 
   return (
-    <section className="single-workspace">
-      <div className="single-layout">
-        {settingsPanel}
-        {taskPanel}
-      </div>
-    </section>
+    <>
+      <section className="single-workspace">
+        <div className="single-layout">
+          {settingsPanel}
+          {taskPanel}
+        </div>
+      </section>
+      {settingsRevision && (
+        <TaskSettingsRevisionDialog
+          preview={settingsRevision}
+          busy={busy}
+          onCommit={commitSettings}
+          onCancel={() => setSettingsRevision(null)}
+        />
+      )}
+    </>
   );
 }
 

@@ -180,6 +180,7 @@ export interface TaskSettingsPanelProps {
   input: Record<string, unknown>;
   busy: boolean;
   onApply: (input: Record<string, unknown>) => Promise<void> | void;
+  onPrepare?: (input: Record<string, unknown>) => Promise<void> | void;
   onClose: () => void;
 }
 
@@ -189,6 +190,7 @@ export default function TaskSettingsPanel({
   input,
   busy,
   onApply,
+  onPrepare,
   onClose
 }: TaskSettingsPanelProps): React.JSX.Element {
   const persistKey = `pkulaw.task-settings.${taskId}.v1`;
@@ -213,8 +215,15 @@ export default function TaskSettingsPanel({
       return;
     }
     try {
-      await onApply(buildTaskSettingsInput(mode, draft));
-      globalThis.localStorage?.removeItem?.(persistKey);
+      const nextInput = buildTaskSettingsInput(mode, draft);
+      if (onPrepare) {
+        await onPrepare(nextInput);
+      } else {
+        await onApply(nextInput);
+      }
+      if (!onPrepare) {
+        globalThis.localStorage?.removeItem?.(persistKey);
+      }
     } catch (applyError) {
       setError(`应用设置失败：${String(applyError)}`);
     }
@@ -233,7 +242,7 @@ export default function TaskSettingsPanel({
             </span>
             <h2>任务设置</h2>
             <p className="collector-form-guidance">
-              应用后从第 1 页重扫，已完成文件保留；仅在安全边界生效。
+              保存后选择处理旧成果，并从第 1 页按新设置重新扫描。
             </p>
           </div>
           <span className="task-settings-badge">同一任务</span>
@@ -417,7 +426,7 @@ export default function TaskSettingsPanel({
             disabled={busy}
             onClick={() => void apply()}
           >
-            {busy ? "正在应用设置…" : "应用设置"}
+            {busy ? "正在保存修改…" : "保存修改"}
           </button>
         </div>
       </div>

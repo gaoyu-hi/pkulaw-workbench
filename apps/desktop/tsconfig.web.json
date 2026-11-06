@@ -26,6 +26,7 @@
     "tests/browser-surface.test.ts",
     "tests/manual-recovery-ui.test.ts",
     "tests/overview-workspace.test.ts",
+    "tests/task-settings-revision-dialog.test.ts",
     "tests/task-settings-panel.test.ts",
     "tests/task-workspace-frame.test.ts",
     "tests/task-presentation.test.ts",

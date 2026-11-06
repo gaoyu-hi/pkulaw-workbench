@@ -20,6 +20,12 @@ export function shouldResetCollector(
   );
 }
 
+export function canOpenTaskSettings(
+  status: string | null | undefined
+): boolean {
+  return status === "paused";
+}
+
 export function shouldAutoSelectTask(
   taskId: string | null | undefined,
   suppressedTaskId: string | null | undefined

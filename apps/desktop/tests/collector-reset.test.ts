@@ -2,6 +2,7 @@ import { createElement, useEffect } from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { describe, expect, it } from "vitest";
 import {
+  canOpenTaskSettings,
   resetBatchCollectorForm,
   resetSingleCollectorForm,
   shouldAutoSelectTask,
@@ -56,6 +57,13 @@ describe("collector completion reset", () => {
     expect(shouldResetCollector("completed", "completed")).toBe(false);
     expect(shouldResetCollector("running", "failed")).toBe(false);
     expect(shouldResetCollector(undefined, "completed")).toBe(false);
+  });
+
+  it("opens task settings only when the task is paused", () => {
+    expect(canOpenTaskSettings("paused")).toBe(true);
+    expect(canOpenTaskSettings("running")).toBe(false);
+    expect(canOpenTaskSettings("waiting_manual")).toBe(false);
+    expect(canOpenTaskSettings(undefined)).toBe(false);
   });
 
   it("keeps a completed task suppressed until the user creates or selects another task", () => {

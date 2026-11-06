@@ -419,6 +419,24 @@ export interface TaskSettingsUpdateResult {
   details: TaskDetails | BatchTaskDetails;
 }
 
+export interface TaskSettingsArtifactSummary {
+  completedPolicyCount: number;
+  completedBatchCount: number;
+  registeredFileCount: number;
+  eligibleFileCount: number;
+  protectedFileCount: number;
+  directoryCount: number;
+  estimatedFreedBytes: number;
+}
+
+export interface TaskSettingsRevisionPreview {
+  token: string;
+  changed: boolean;
+  generation: number;
+  artifactSummary: TaskSettingsArtifactSummary;
+  protectedFiles: CleanupFileRecord[];
+}
+
 export interface BackendState {
   status: BackendStatus;
   pid: number | null;
@@ -607,6 +625,17 @@ export interface DesktopApi {
   applyTaskSettings(
     taskId: string,
     input: Record<string, unknown>,
+    operationId: string
+  ): Promise<TaskSettingsUpdateResult>;
+  prepareTaskSettingsRevision(
+    taskId: string,
+    input: Record<string, unknown>,
+    operationId: string
+  ): Promise<TaskSettingsRevisionPreview>;
+  commitTaskSettingsRevision(
+    taskId: string,
+    token: string,
+    artifactPolicy: "preserve" | "delete",
     operationId: string
   ): Promise<TaskSettingsUpdateResult>;
   startSingleTask(taskId: string, operationId?: string): Promise<TaskDetails>;
