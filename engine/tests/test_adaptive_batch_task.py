@@ -265,6 +265,39 @@ class CaptchaReuseAdapter(FakeAdapter):
         return super().search(**kwargs)
 
 
+class DuplicateYearSwitchAdapter(FakeAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            year_entries=[
+                {"value": "2022", "count": 1},
+                {"value": "2023", "count": 2},
+            ]
+        )
+
+    def select_year(self, *, year: str) -> dict[str, Any]:
+        if year != "2023":
+            return super().select_year(year=year)
+        request = self.current_search_request
+        if request is None:
+            raise RuntimeError("no request")
+        policy_id = f"{request.library}-{request.query}-dup-2023"
+        rows = [
+            dict(_row(policy_id, "2023")),
+            dict(_row(policy_id, "2023")),
+        ]
+        state = _state(
+            search_id=f"year-{year}",
+            query=request.query,
+            library=request.library,
+            year=year,
+            rows=rows,
+            result_count=len(rows),
+            reported_total_pages=1,
+        )
+        self._attach(state, request.query, request.library, year)
+        return state
+
+
 class AdaptiveBatchTaskTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -416,6 +449,35 @@ class AdaptiveBatchTaskTests(unittest.TestCase):
                 TaskControl(self.task_id),
             )
         self.assertEqual(adapter.select_year_calls, [])
+
+    def test_batch_v2_year_switch_coverage_counts_unique_policies(self) -> None:
+        adapter = DuplicateYearSwitchAdapter()
+        manager = self._manager()
+        with mock.patch(
+            "pkulaw_engine.batch_task.SearchActionGovernor",
+            return_value=SimpleNamespace(
+                before_result_action=lambda _kind: None,
+                after_result_action=lambda *a, **k: None,
+                note_captcha_cleared=lambda *a, **k: False,
+                snapshot=lambda: {
+                    "keyword_submissions": 0,
+                    "year_filter_switches": 0,
+                    "captcha_waits": 0,
+                    "released_to_boundary": False,
+                },
+            ),
+        ):
+            manager._prepare_batches(
+                self.store,
+                self.task_id,
+                self._config(),
+                adapter,
+                TaskControl(self.task_id),
+            )
+        checkpoint = self.store.get_task(self.task_id)["checkpoint"]
+        adaptive = checkpoint["adaptiveSearch"]
+        self.assertIn("2023", adaptive["missingYears"])
+        self.assertNotIn("2023", adaptive["completedYears"])
 
     def test_batch_v2_boundary_records_remaining_scope(self) -> None:
         adapter = FakeAdapter(

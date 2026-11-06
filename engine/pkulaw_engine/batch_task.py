@@ -2039,37 +2039,6 @@ class BatchTaskManager:
                             config.year_selection,
                         )
                     ]
-                    scope_state = adaptive_scope_states.get(
-                        (query, library)
-                    )
-                    if scope_state is not None:
-                        for row in rows:
-                            row_year = publication_year_from_row(row)
-                            if row_year is not None:
-                                key = str(row_year)
-                                collected = scope_state.setdefault(
-                                    "collected",
-                                    {},
-                                )
-                                collected[key] = int(
-                                    collected.get(key, 0)
-                                ) + 1
-                if (
-                    adaptive_mode
-                    and config.year_selection.mode == "range"
-                    and combination.action_kind == "year-filter-switch"
-                ):
-                    scope_state = adaptive_scope_states.get(
-                        (query, library)
-                    )
-                    if scope_state is not None:
-                        collected = scope_state.setdefault(
-                            "collected",
-                            {},
-                        )
-                        collected[year] = int(
-                            collected.get(year, 0)
-                        ) + len(rows)
                 if any(not row.get("number") for row in rows):
                     raise ValidationError(
                         "BATCH_ROW_IDENTITY_INCOMPLETE",
@@ -2118,6 +2087,30 @@ class BatchTaskManager:
                     ).add(policy_id)
                     deduped_rows.append(row)
                 rows = deduped_rows
+                if (
+                    adaptive_mode
+                    and config.year_selection.mode == "range"
+                ):
+                    scope_state = adaptive_scope_states.get(
+                        (query, library)
+                    )
+                    if scope_state is not None:
+                        collected = scope_state.setdefault(
+                            "collected",
+                            {},
+                        )
+                        for row in rows:
+                            row_year = (
+                                year
+                                if combination.action_kind
+                                == "year-filter-switch"
+                                else publication_year_from_row(row)
+                            )
+                            if row_year is not None:
+                                key = str(row_year)
+                                collected[key] = int(
+                                    collected.get(key, 0)
+                                ) + 1
                 stats["resultCount"] = max(
                     int(stats.get("resultCount") or 0),
                     int(state.get("resultCount") or 0),
