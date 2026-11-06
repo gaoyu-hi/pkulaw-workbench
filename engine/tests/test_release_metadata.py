@@ -26,7 +26,7 @@ class ReleaseMetadataTests(unittest.TestCase):
             "engineRuntime": pkulaw_engine.__version__,
         }
 
-        self.assertEqual(set(versions.values()), {"0.2.4"}, versions)
+        self.assertEqual(set(versions.values()), {"0.2.5"}, versions)
 
 
 if __name__ == "__main__":

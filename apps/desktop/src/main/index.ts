@@ -5006,8 +5006,8 @@ async function runStage6Smoke(
 
     const diagnostics = await runDiagnostics(appInfo, service, browserHost);
     if (
-      appInfo.version !== "0.2.4" ||
-      service.getState().engineVersion !== "0.2.4"
+      appInfo.version !== "0.2.5" ||
+      service.getState().engineVersion !== "0.2.5"
     ) {
       throw new Error(
         `Application/backend version mismatch: ${appInfo.version}/${service.getState().engineVersion}`

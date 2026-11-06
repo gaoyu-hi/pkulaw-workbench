@@ -329,7 +329,7 @@ export default function DataPanel({
       <div className="data-header panel">
         <div>
           <span className="eyebrow">
-            {appInfo?.version || "0.2.4"} · 数据治理
+            {appInfo?.version || "0.2.5"} · 数据治理
           </span>
           <h2>从来源文件到可分析数据</h2>
           <p>统一生成逐条 TXT、总目录 CSV/XLSX、来源证据与任务报告。</p>

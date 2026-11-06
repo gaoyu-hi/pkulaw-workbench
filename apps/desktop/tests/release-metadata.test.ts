@@ -24,10 +24,10 @@ describe("release metadata", () => {
       "apps/desktop/src/renderer/src/TaskCenterPanel.tsx"
     ];
 
-    expect(rootPackage.version).toBe("0.2.4");
-    expect(desktopPackage.version).toBe("0.2.4");
+    expect(rootPackage.version).toBe("0.2.5");
+    expect(desktopPackage.version).toBe("0.2.5");
     expect(read("apps/desktop/src/main/index.ts")).toContain(
-      'appInfo.version !== "0.2.4"'
+      'appInfo.version !== "0.2.5"'
     );
     for (const file of activeSources) {
       expect(read(file), file).not.toContain("0.2.1");
