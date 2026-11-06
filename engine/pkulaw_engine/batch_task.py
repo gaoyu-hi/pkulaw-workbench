@@ -1676,6 +1676,9 @@ class BatchTaskManager:
                         adapter=adapter,
                         combination=combination,
                         governor=governor,
+                        completed_policy_count=(
+                            self._adaptive_completed_policy_count(year_stats)
+                        ),
                     )
                 else:
                     state = self._with_manual_retry(
@@ -1783,7 +1786,12 @@ class BatchTaskManager:
                 scope_key = (query, library)
                 scope_state = adaptive_scope_states.setdefault(
                     scope_key,
-                    {"collected": {}, "plan": None, "truncated": False},
+                    {
+                        "collected": {},
+                        "plan": None,
+                        "truncated": False,
+                        "entries": [],
+                    },
                 )
                 collected = dict(scope_state.get("collected") or {})
                 entries = adapter.available_filter_entries("year")
@@ -1796,6 +1804,7 @@ class BatchTaskManager:
                 )
                 adaptive_plan = plan
                 scope_state["plan"] = plan
+                scope_state["entries"] = entries
                 adaptive_truncated = result_window.status == "truncated"
                 scope_state["truncated"] = adaptive_truncated
                 if (
@@ -1812,7 +1821,11 @@ class BatchTaskManager:
                                 combination.province
                                 or config.province_for(library)
                             ),
-                            completed_policy_count=0,
+                            completed_policy_count=(
+                                self._adaptive_completed_policy_count(
+                                    year_stats
+                                )
+                            ),
                             remaining_scopes=(
                                 {
                                     "query": query,
@@ -2041,6 +2054,22 @@ class BatchTaskManager:
                                 collected[key] = int(
                                     collected.get(key, 0)
                                 ) + 1
+                if (
+                    adaptive_mode
+                    and config.year_selection.mode == "range"
+                    and combination.action_kind == "year-filter-switch"
+                ):
+                    scope_state = adaptive_scope_states.get(
+                        (query, library)
+                    )
+                    if scope_state is not None:
+                        collected = scope_state.setdefault(
+                            "collected",
+                            {},
+                        )
+                        collected[year] = int(
+                            collected.get(year, 0)
+                        ) + len(rows)
                 if any(not row.get("number") for row in rows):
                     raise ValidationError(
                         "BATCH_ROW_IDENTITY_INCOMPLETE",
@@ -2387,28 +2416,35 @@ class BatchTaskManager:
                     and combination.action_kind == "keyword-submission"
                 ):
                     scope_state = adaptive_scope_states[(query, library)]
-                    plan = plan_adaptive_years(
-                        config.year_selection,
-                        adapter.available_filter_entries("year"),
-                        scope_state.get("collected") or {},
-                        query=query,
-                        library=library,
+                    reported_pages = int(
+                        search_session.reported_total_pages
+                        or total_pages
                     )
-                    scope_state["plan"] = plan
-                    if plan.missing_years:
-                        missing_combinations = (
-                            build_year_switch_combinations(
-                                plan,
-                                combination.query_index,
-                                combination.library_index,
-                                start_index=len(combinations),
-                            )
+                    if adaptive_truncated and page >= reported_pages:
+                        self._append_adaptive_missing_year_combinations(
+                            config=config,
+                            adapter=adapter,
+                            combination=combination,
+                            scope_state=scope_state,
+                            combinations=combinations,
+                            adaptive_missing_years=adaptive_missing_years,
                         )
-                        combinations.extend(missing_combinations)
-                        adaptive_missing_years.extend(plan.missing_years)
-                    if adaptive_truncated:
                         break
                 if page >= total_pages:
+                    if (
+                        adaptive_mode
+                        and config.year_selection.mode == "range"
+                        and combination.action_kind == "keyword-submission"
+                    ):
+                        scope_state = adaptive_scope_states[(query, library)]
+                        self._append_adaptive_missing_year_combinations(
+                            config=config,
+                            adapter=adapter,
+                            combination=combination,
+                            scope_state=scope_state,
+                            combinations=combinations,
+                            adaptive_missing_years=adaptive_missing_years,
+                        )
                     stats["status"] = (
                         "no_result"
                         if int(stats.get("resultCount") or 0) == 0
@@ -2961,10 +2997,20 @@ class BatchTaskManager:
         ]
         if adaptive_mode:
             completed_years: set[str] = set()
-            for scope_state in adaptive_scope_states.values():
-                scope_plan = scope_state.get("plan")
-                if scope_plan is not None:
-                    completed_years.update(scope_plan.completed_years)
+            missing_years: set[str] = set()
+            for (scope_query, scope_library), scope_state in (
+                adaptive_scope_states.items()
+            ):
+                scope_plan = plan_adaptive_years(
+                    config.year_selection,
+                    scope_state.get("entries") or [],
+                    scope_state.get("collected") or {},
+                    query=scope_query,
+                    library=scope_library,
+                )
+                scope_state["plan"] = scope_plan
+                completed_years.update(scope_plan.completed_years)
+                missing_years.update(scope_plan.missing_years)
             adaptive_checkpoint = {
                 "keywordSubmissions": int(
                     governor.snapshot()["keyword_submissions"]
@@ -2982,7 +3028,7 @@ class BatchTaskManager:
                 if governor is not None
                 else 0,
                 "completedYears": sorted(completed_years),
-                "missingYears": sorted(set(adaptive_missing_years)),
+                "missingYears": sorted(missing_years),
                 "fallbackMode": "A" if adaptive_boundary else "C",
                 "boundary": adaptive_boundary,
             }
@@ -4695,6 +4741,44 @@ class BatchTaskManager:
             if item is None:
                 raise RuntimeError("policy item update returned no item")
 
+    @staticmethod
+    def _adaptive_completed_policy_count(
+        year_stats: dict[str, dict[str, Any]],
+    ) -> int:
+        return sum(
+            max(0, int(item.get("rowsAccepted") or 0))
+            for item in year_stats.values()
+        )
+
+    def _append_adaptive_missing_year_combinations(
+        self,
+        *,
+        config: BatchTaskConfig,
+        adapter: PkulawAdapter,
+        combination: SearchCombination,
+        scope_state: dict[str, Any],
+        combinations: list[SearchCombination],
+        adaptive_missing_years: list[str],
+    ) -> None:
+        plan = plan_adaptive_years(
+            config.year_selection,
+            adapter.available_filter_entries("year"),
+            scope_state.get("collected") or {},
+            query=combination.query,
+            library=combination.library,
+        )
+        scope_state["plan"] = plan
+        if not plan.missing_years:
+            return
+        missing_combinations = build_year_switch_combinations(
+            plan,
+            combination.query_index,
+            combination.library_index,
+            start_index=len(combinations),
+        )
+        combinations.extend(missing_combinations)
+        adaptive_missing_years.extend(plan.missing_years)
+
     def _run_adaptive_result_action(
         self,
         *,
@@ -4705,10 +4789,11 @@ class BatchTaskManager:
         adapter: PkulawAdapter,
         combination: SearchCombination,
         governor: SearchActionGovernor | None,
+        completed_policy_count: int = 0,
     ) -> dict[str, Any]:
         if governor is None:
             raise RuntimeError("adaptive governor is not initialized")
-        kind: SearchActionKind = (
+        requested_kind: SearchActionKind = (
             "year-filter-switch"
             if combination.action_kind == "year-filter-switch"
             else "keyword-submission"
@@ -4738,9 +4823,18 @@ class BatchTaskManager:
                 task_id,
                 current_action="search",
             )
-            governor.before_result_action(kind)
+            reuse_year_filter = (
+                requested_kind == "year-filter-switch"
+                and can_reuse_session_for_year()
+            )
+            effective_kind: SearchActionKind = (
+                "year-filter-switch"
+                if reuse_year_filter
+                else "keyword-submission"
+            )
+            governor.before_result_action(effective_kind)
             try:
-                if kind == "year-filter-switch" and can_reuse_session_for_year():
+                if reuse_year_filter:
                     state = adapter.select_year(year=combination.year)
                 else:
                     state = adapter.search(
@@ -4756,6 +4850,15 @@ class BatchTaskManager:
                 return state
             except (ManualActionRequired, LoginRequired) as exc:
                 last_error = exc
+                self._wait_for_manual(
+                    store,
+                    controller,
+                    task_id,
+                    str(exc),
+                    "waiting_login"
+                    if isinstance(exc, LoginRequired)
+                    else "waiting_manual",
+                )
                 released = governor.note_captcha_cleared()
                 if released:
                     raise CaptureBoundaryRequired(
@@ -4765,7 +4868,7 @@ class BatchTaskManager:
                             library=combination.library,
                             year=combination.year,
                             province=province,
-                            completed_policy_count=0,
+                            completed_policy_count=completed_policy_count,
                             remaining_scopes=(
                                 {
                                     "query": combination.query,
@@ -4781,15 +4884,6 @@ class BatchTaskManager:
                             ),
                         )
                     )
-                self._wait_for_manual(
-                    store,
-                    controller,
-                    task_id,
-                    str(exc),
-                    "waiting_login"
-                    if isinstance(exc, LoginRequired)
-                    else "waiting_manual",
-                )
                 request = adapter.current_search_request
                 session = adapter.current_search_session
                 if request is not None and session is not None:

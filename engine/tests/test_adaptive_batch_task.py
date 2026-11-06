@@ -221,14 +221,30 @@ class FakeAdapter:
     def go_to_page(self, target_page: int) -> dict[str, Any]:
         if self.current_search_request is None:
             raise RuntimeError("no request")
+        reported = (
+            self.current_search_session.reported_total_pages
+            if self.current_search_session is not None
+            else None
+        ) or 1
+        if self.current_search_session is None:
+            raise RuntimeError("no session")
         return _state(
-            search_id="page",
+            search_id=self.current_search_session.search_id,
             query=self.current_search_request.query,
             library=self.current_search_request.library,
             year=self.current_search_request.year,
-            rows=[],
-            result_count=0,
-            reported_total_pages=1,
+            rows=[
+                dict(
+                    _row(
+                        f"{self.current_search_request.library}-"
+                        f"{self.current_search_request.query}-"
+                        f"page-{target_page}",
+                        "2022",
+                    )
+                )
+            ],
+            result_count=self.current_search_session.result_count,
+            reported_total_pages=reported,
             page=target_page,
         )
 
@@ -467,6 +483,54 @@ class AdaptiveBatchTaskTests(unittest.TestCase):
         self.assertEqual(len(adapter.search_calls), 1)
         self.assertIsNotNone(adapter.current_search_session)
         self.assertEqual(state["searchSession"]["query"], "碳中和")
+
+    def test_batch_v2_boundary_persists_waiting_manual_state(self) -> None:
+        adapter = FakeAdapter(
+            year_entries=[
+                {"value": "2022", "count": 1},
+                {"value": "2023", "count": 201},
+            ],
+            truncated_year="2023",
+        )
+        manager = self._manager()
+        with (
+            mock.patch(
+                "pkulaw_engine.batch_task.PkulawAdapter",
+                return_value=adapter,
+            ),
+            mock.patch.object(
+                manager.browser_bridge,
+                "state",
+                return_value={
+                    "captchaVisible": False,
+                    "loginVisible": False,
+                    "authenticated": True,
+                },
+            ),
+            mock.patch(
+                "pkulaw_engine.batch_task.SearchActionGovernor",
+                return_value=SimpleNamespace(
+                    before_result_action=lambda _kind: None,
+                    after_result_action=lambda *a, **k: None,
+                    note_captcha_cleared=lambda *a, **k: False,
+                    snapshot=lambda: {
+                        "keyword_submissions": 0,
+                        "year_filter_switches": 0,
+                        "captcha_waits": 0,
+                        "released_to_boundary": False,
+                    },
+                ),
+            ),
+        ):
+            manager._run(
+                self.task_id,
+                self._config(),
+                TaskControl(self.task_id),
+            )
+        task = self.store.get_task(self.task_id)
+        self.assertIsNotNone(task)
+        self.assertEqual(task["status"], "waiting_manual")
+        self.assertEqual(task["error"]["code"], "CAPTURE_BOUNDARY_REACHED")
 
 
 if __name__ == "__main__":
