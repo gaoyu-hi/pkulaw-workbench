@@ -61,6 +61,7 @@ import TaskSettingsPanel from "./TaskSettingsPanel";
 import {
   resetSingleCollectorForm,
   shouldAutoSelectTask,
+  shouldLoadTaskDetails,
   shouldResetCollector
 } from "./collector-reset";
 
@@ -252,10 +253,14 @@ export default function SingleCollectorPanel({
             : "") ||
           ""
         );
-        if (eventTaskId) {
-          void loadDetails(eventTaskId).catch(() => undefined);
-        } else if (selectedTaskId) {
-          void loadDetails(selectedTaskId).catch(() => undefined);
+        const automaticTaskId = eventTaskId || selectedTaskId;
+        if (
+          shouldLoadTaskDetails(
+            automaticTaskId,
+            suppressedCompletedTaskIdRef.current
+          )
+        ) {
+          void loadDetails(automaticTaskId).catch(() => undefined);
         }
       }
     });
@@ -293,7 +298,6 @@ export default function SingleCollectorPanel({
     if (!shouldAutoSelectTask(tasks[0].id, suppressedCompletedTaskIdRef.current)) {
       return;
     }
-    suppressedCompletedTaskIdRef.current = "";
     void loadDetails(tasks[0].id).catch(() => undefined);
   }, [selectedTaskId, tasks]);
 

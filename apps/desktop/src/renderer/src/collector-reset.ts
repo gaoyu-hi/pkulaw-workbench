@@ -26,6 +26,13 @@ export function shouldAutoSelectTask(
   return Boolean(taskId) && taskId !== suppressedTaskId;
 }
 
+export function shouldLoadTaskDetails(
+  taskId: string | null | undefined,
+  suppressedTaskId: string | null | undefined
+): boolean {
+  return shouldAutoSelectTask(taskId, suppressedTaskId);
+}
+
 export interface SingleCollectorResetSetters {
   setQueries: (value: string) => void;
   setMatchMode: (value: CollectorMatchMode) => void;

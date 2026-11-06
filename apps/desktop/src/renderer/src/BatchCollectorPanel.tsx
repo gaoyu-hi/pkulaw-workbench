@@ -68,6 +68,7 @@ import TaskSettingsPanel from "./TaskSettingsPanel";
 import {
   resetBatchCollectorForm,
   shouldAutoSelectTask,
+  shouldLoadTaskDetails,
   shouldResetCollector
 } from "./collector-reset";
 
@@ -240,10 +241,14 @@ export default function BatchCollectorPanel({
             : "") ||
           ""
         );
-        if (taskId) {
-          void loadDetails(taskId).catch(() => undefined);
-        } else if (selectedTaskId) {
-          void loadDetails(selectedTaskId).catch(() => undefined);
+        const automaticTaskId = taskId || selectedTaskId;
+        if (
+          shouldLoadTaskDetails(
+            automaticTaskId,
+            suppressedCompletedTaskIdRef.current
+          )
+        ) {
+          void loadDetails(automaticTaskId).catch(() => undefined);
         }
       }
     });
@@ -281,7 +286,6 @@ export default function BatchCollectorPanel({
     if (!shouldAutoSelectTask(tasks[0].id, suppressedCompletedTaskIdRef.current)) {
       return;
     }
-    suppressedCompletedTaskIdRef.current = "";
     void loadDetails(tasks[0].id).catch(() => undefined);
   }, [selectedTaskId, tasks]);
 

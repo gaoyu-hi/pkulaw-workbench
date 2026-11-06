@@ -3,6 +3,7 @@ import {
   resetBatchCollectorForm,
   resetSingleCollectorForm,
   shouldAutoSelectTask,
+  shouldLoadTaskDetails,
   shouldResetCollector
 } from "../src/renderer/src/collector-reset";
 
@@ -58,6 +59,13 @@ describe("collector completion reset", () => {
     expect(shouldAutoSelectTask("task-b", "task-a")).toBe(true);
     expect(shouldAutoSelectTask(undefined, "task-a")).toBe(false);
     expect(shouldAutoSelectTask("task-a", "")).toBe(true);
+  });
+
+  it("blocks automatic detail loading of the suppressed completed task from refresh and engine events", () => {
+    expect(shouldLoadTaskDetails("task-a", "task-a")).toBe(false);
+    expect(shouldLoadTaskDetails("task-b", "task-a")).toBe(true);
+    expect(shouldLoadTaskDetails(undefined, "task-a")).toBe(false);
+    expect(shouldLoadTaskDetails("task-a", "")).toBe(true);
   });
 
   it("resets the single collector to defaults", () => {
