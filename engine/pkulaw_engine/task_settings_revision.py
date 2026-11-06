@@ -38,6 +38,8 @@ DERIVED_SCAN_KEYS = frozenset(
         "downloadProgress",
         "currentCatalogFile",
         "currentZipFile",
+        "searchRecovery",
+        "pendingSearchAction",
         "interruptedPreviousStatus",
         "stopRequestedAt",
     }
