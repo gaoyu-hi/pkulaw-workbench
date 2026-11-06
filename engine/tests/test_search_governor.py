@@ -29,21 +29,29 @@ class SearchActionGovernorTests(unittest.TestCase):
     def test_second_action_waits_only_the_remaining_interval(self) -> None:
         clock = FakeClock(100.0)
         sleeps: list[float] = []
-        governor = SearchActionGovernor(clock=clock, sleep=sleeps.append)
+        governor = SearchActionGovernor(
+            clock=clock,
+            sleep=sleeps.append,
+            random_fn=lambda: 0.5,
+        )
 
         governor.after_result_action()
         clock.advance(0.4)
         governor.before_result_action("year-filter-switch")
 
-        self.assertEqual(sleeps, [0.6])
+        self.assertEqual(sleeps, [1.6])
 
     def test_elapsed_interval_at_least_one_second_does_not_wait(self) -> None:
         clock = FakeClock(100.0)
         sleeps: list[float] = []
-        governor = SearchActionGovernor(clock=clock, sleep=sleeps.append)
+        governor = SearchActionGovernor(
+            clock=clock,
+            sleep=sleeps.append,
+            random_fn=lambda: 0.5,
+        )
 
         governor.after_result_action()
-        clock.advance(1.2)
+        clock.advance(2.1)
         governor.before_result_action("year-filter-switch")
 
         self.assertEqual(sleeps, [])
@@ -238,6 +246,75 @@ class SearchActionGovernorTests(unittest.TestCase):
 
         self.assertEqual(governor.before_result_action("keyword-submission"), None)
         self.assertEqual(governor.snapshot()["result_action_count"], 1)
+
+    def test_normal_interval_is_within_original_slow_range(self) -> None:
+        clock = FakeClock(100.0)
+        sleeps: list[float] = []
+        governor = SearchActionGovernor(
+            clock=clock,
+            sleep=sleeps.append,
+            random_fn=lambda: 1.0,
+        )
+        governor.record_action_started(
+            "keyword-submission",
+            "action-1",
+            "人工智能|central",
+        )
+        governor.record_action_completed("action-1")
+
+        delay = governor.required_delay_for_next_action(
+            "人工智能|central"
+        )
+
+        self.assertGreaterEqual(delay, 1.5)
+        self.assertLessEqual(delay, 2.5)
+
+    def test_query_or_library_transition_uses_longer_pause(self) -> None:
+        clock = FakeClock(100.0)
+        sleeps: list[float] = []
+        governor = SearchActionGovernor(
+            clock=clock,
+            sleep=sleeps.append,
+            random_fn=lambda: 1.0,
+        )
+        governor.record_action_started(
+            "keyword-submission",
+            "action-1",
+            "人工智能|central",
+        )
+        governor.record_action_completed("action-1")
+
+        delay = governor.required_delay_for_next_action(
+            "碳中和|local"
+        )
+
+        self.assertGreaterEqual(delay, 3.0)
+        self.assertLessEqual(delay, 4.5)
+
+    def test_same_scope_pacing_audit_is_persisted(self) -> None:
+        clock = FakeClock(100.0)
+        governor = SearchActionGovernor(
+            clock=clock,
+            sleep=lambda seconds: clock.advance(seconds),
+            random_fn=lambda: 0.5,
+        )
+        governor.record_action_started(
+            "keyword-submission",
+            "action-1",
+            "人工智能|central",
+        )
+        governor.record_action_completed("action-1")
+        clock.advance(0.25)
+        governor.record_action_started(
+            "year-filter-switch",
+            "action-2",
+            "人工智能|central",
+        )
+        snapshot = governor.snapshot()
+
+        self.assertEqual(snapshot["last_scope_key"], "人工智能|central")
+        self.assertGreaterEqual(snapshot["next_wait_ms"], 1500)
+        self.assertLessEqual(snapshot["next_wait_ms"], 2500)
 
 
 if __name__ == "__main__":

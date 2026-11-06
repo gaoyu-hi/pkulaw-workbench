@@ -663,6 +663,11 @@ class PaginationContractTests(unittest.TestCase):
                     "totalPages": 3,
                     "rows": [{"policyId": "p2"}],
                 },
+                {
+                    "page": 2,
+                    "totalPages": 3,
+                    "rows": [{"policyId": "p2"}],
+                },
             ]
             clock = [0.0]
 
@@ -700,6 +705,11 @@ class PaginationContractTests(unittest.TestCase):
             tab = MagicMock()
             states = iter(
                 [
+                    {
+                        "page": 2,
+                        "totalPages": 3,
+                        "rows": [{"policyId": "p2"}],
+                    },
                     {
                         "page": 2,
                         "totalPages": 3,
@@ -762,6 +772,11 @@ class PaginationContractTests(unittest.TestCase):
                     "totalPages": 3,
                     "rows": [{"policyId": "p2-b"}],
                 },
+                {
+                    "page": 2,
+                    "totalPages": 3,
+                    "rows": [{"policyId": "p2-b"}],
+                },
             ]
         )
 
@@ -800,6 +815,13 @@ class PaginationContractTests(unittest.TestCase):
         ]
         states = iter(
             [
+                {
+                    "page": 21,
+                    "totalPages": 20,
+                    "resultCount": 17224,
+                    "actualPageSize": 100,
+                    "rows": [{"policyId": "p21"}],
+                },
                 {
                     "page": 21,
                     "totalPages": 20,

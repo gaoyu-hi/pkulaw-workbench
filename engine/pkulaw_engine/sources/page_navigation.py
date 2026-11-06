@@ -149,6 +149,7 @@ def transition_next_page(
     click_timeout_seconds: float = 4.0,
     settle_timeout_seconds: float = 16.0,
     interval_seconds: float = 0.35,
+    stable_samples: int = 3,
     allow_direct_page_fallback: bool = False,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
@@ -212,7 +213,7 @@ def transition_next_page(
             else:
                 stable = 1
                 last_signature = identity
-            if stable >= 2:
+            if stable >= max(2, int(stable_samples)):
                 return state, stable
         return None, stable
 

@@ -15,7 +15,9 @@ class SearchActionGovernor:
         *,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
-        minimum_interval_seconds: float = 1.0,
+        minimum_interval_seconds: float = 1.5,
+        maximum_interval_seconds: float = 2.5,
+        scope_interval_seconds: tuple[float, float] = (3.0, 4.5),
         captcha_interval_seconds: float = 10.0,
         captcha_window_actions: int = 5,
         random_fn: Callable[[], float] = random.random,
@@ -23,6 +25,8 @@ class SearchActionGovernor:
         self.clock = clock
         self.sleep = sleep
         self.minimum_interval_seconds = minimum_interval_seconds
+        self.maximum_interval_seconds = maximum_interval_seconds
+        self.scope_interval_seconds = scope_interval_seconds
         self.captcha_interval_seconds = captcha_interval_seconds
         self.captcha_window_actions = captcha_window_actions
         self.random_fn = random_fn
@@ -39,6 +43,7 @@ class SearchActionGovernor:
         self._action_kinds: dict[str, SearchActionKind] = {}
         self._completed_action_ids: set[str] = set()
         self._last_scope_key = ""
+        self._next_wait_ms = 0.0
         self._released_to_boundary = False
         self._breaker_reason = ""
         self._legacy_action_sequence = 0
@@ -50,7 +55,9 @@ class SearchActionGovernor:
         *,
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
-        minimum_interval_seconds: float = 1.0,
+        minimum_interval_seconds: float = 1.5,
+        maximum_interval_seconds: float = 2.5,
+        scope_interval_seconds: tuple[float, float] = (3.0, 4.5),
         captcha_interval_seconds: float = 10.0,
         captcha_window_actions: int = 5,
         random_fn: Callable[[], float] = random.random,
@@ -59,6 +66,8 @@ class SearchActionGovernor:
             clock=clock,
             sleep=sleep,
             minimum_interval_seconds=minimum_interval_seconds,
+            maximum_interval_seconds=maximum_interval_seconds,
+            scope_interval_seconds=scope_interval_seconds,
             captcha_interval_seconds=captcha_interval_seconds,
             captcha_window_actions=captcha_window_actions,
             random_fn=random_fn,
@@ -100,6 +109,9 @@ class SearchActionGovernor:
             governor._last_scope_key = str(
                 payload.get("last_scope_key") or ""
             )
+            governor._next_wait_ms = float(
+                payload.get("next_wait_ms") or 0
+            )
             raw_counts = payload.get("captcha_counts")
             if isinstance(raw_counts, dict):
                 governor._captcha_counts = {
@@ -126,6 +138,8 @@ class SearchActionGovernor:
                 clock=clock,
                 sleep=sleep,
                 minimum_interval_seconds=minimum_interval_seconds,
+                maximum_interval_seconds=maximum_interval_seconds,
+                scope_interval_seconds=scope_interval_seconds,
                 captcha_interval_seconds=captcha_interval_seconds,
                 captcha_window_actions=captcha_window_actions,
                 random_fn=random_fn,
@@ -138,24 +152,13 @@ class SearchActionGovernor:
         action_id: str,
         scope_key: str,
     ) -> None:
-        now = float(self.clock())
-        wait_seconds = 0.0
-
-        if (
-            self._captcha_cooldown_until is not None
-            and self._captcha_cooldown_until > now
-        ):
-            wait_seconds = round(self._captcha_cooldown_until - now, 6)
-        elif self._last_completed_at is not None:
-            elapsed = now - self._last_completed_at
-            wait_seconds = round(
-                max(0.0, self.minimum_interval_seconds - elapsed),
-                6,
-            )
+        wait_seconds = self.required_delay_for_next_action(scope_key)
 
         if wait_seconds > 0:
             self.sleep(wait_seconds)
 
+        self._next_wait_ms = round(wait_seconds * 1000)
+        now = float(self.clock())
         self._result_action_count += 1
         self._last_action_at = now
         self._last_scope_key = str(scope_key or "")
@@ -164,6 +167,42 @@ class SearchActionGovernor:
             self._keyword_submissions += 1
         elif kind == "year-filter-switch":
             self._year_filter_switches += 1
+
+    def required_delay_for_next_action(
+        self,
+        scope_key: str = "",
+    ) -> float:
+        now = float(self.clock())
+        if (
+            self._captcha_cooldown_until is not None
+            and self._captcha_cooldown_until > now
+        ):
+            return round(
+                self._captcha_cooldown_until - now,
+                6,
+            )
+        if self._last_completed_at is None:
+            return 0.0
+        scope_changed = bool(
+            self._last_scope_key
+            and scope_key
+            and self._last_scope_key != scope_key
+        )
+        minimum, maximum = (
+            self.scope_interval_seconds
+            if scope_changed
+            else (
+                self.minimum_interval_seconds,
+                self.maximum_interval_seconds,
+            )
+        )
+        random_value = min(
+            1.0,
+            max(0.0, float(self.random_fn())),
+        )
+        target = minimum + (maximum - minimum) * random_value
+        elapsed = now - self._last_completed_at
+        return round(max(0.0, target - elapsed), 6)
 
     def record_action_completed(
         self,
@@ -254,6 +293,12 @@ class SearchActionGovernor:
             "captcha_counts": dict(self._captcha_counts),
             "action_kinds": dict(self._action_kinds),
             "last_scope_key": self._last_scope_key,
+            "next_wait_ms": self._next_wait_ms,
+            "minimum_interval_seconds": self.minimum_interval_seconds,
+            "maximum_interval_seconds": self.maximum_interval_seconds,
+            "scope_interval_seconds": list(
+                self.scope_interval_seconds
+            ),
         }
 
 

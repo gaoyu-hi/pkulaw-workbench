@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from itertools import count
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -407,6 +408,7 @@ class PkulawAdapterOperationTests(unittest.TestCase):
                 self.assertEqual(self.adapter.go_to_page(3)["page"], 3)
 
     def test_selector_gate_and_next_page_recovery_paths(self) -> None:
+        clock = [0.0]
         with (
             patch.object(
                 self.adapter,
@@ -429,13 +431,20 @@ class PkulawAdapterOperationTests(unittest.TestCase):
                     {"page": 1, "totalPages": 3, "rows": [{"policyId": "p1"}]},
                     {"page": 2, "totalPages": 3, "rows": [{"policyId": "p2"}]},
                     {"page": 2, "totalPages": 3, "rows": [{"policyId": "p2"}]},
+                    {"page": 2, "totalPages": 3, "rows": [{"policyId": "p2"}]},
                 ],
             ),
             patch(
                 "pkulaw_engine.sources.pkulaw.time.monotonic",
-                side_effect=[0, 0, 0, 0, 0],
+                side_effect=lambda: clock[0],
             ),
-            patch("pkulaw_engine.sources.pkulaw.time.sleep"),
+            patch(
+                "pkulaw_engine.sources.pkulaw.time.sleep",
+                side_effect=lambda seconds: clock.__setitem__(
+                    0,
+                    clock[0] + max(0.35, seconds),
+                ),
+            ),
         ):
             self.tab.run_js.return_value = {"ok": True}
             self.assertEqual(self.adapter.next_page(2)["page"], 2)
@@ -490,11 +499,16 @@ class PkulawAdapterOperationTests(unittest.TestCase):
                             "totalPages": 2,
                             "rows": [{"policyId": "p2"}],
                         },
+                        {
+                            "page": 2,
+                            "totalPages": 2,
+                            "rows": [{"policyId": "p2"}],
+                        },
                     ],
                 ),
                 patch(
                     "pkulaw_engine.sources.pkulaw.time.monotonic",
-                    side_effect=[0, 0, 0],
+                    side_effect=count(),
                 ),
                 patch("pkulaw_engine.sources.pkulaw.time.sleep"),
             ):
@@ -557,7 +571,11 @@ class PkulawAdapterOperationTests(unittest.TestCase):
             patch.object(
                 self.adapter,
                 "_read_results",
-                side_effect=[stale, extended, extended],
+                side_effect=[stale, extended, extended, extended],
+            ),
+            patch(
+                "pkulaw_engine.sources.pkulaw.time.monotonic",
+                side_effect=count(),
             ),
             patch("pkulaw_engine.sources.pkulaw.time.sleep"),
         ):
