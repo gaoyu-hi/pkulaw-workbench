@@ -32,6 +32,12 @@ from .protocol import (
 from .single_task import SingleTaskManager
 from .sources.pkulaw import PkulawAdapter
 from .sources.search_mode import resolve_search_mode
+from .settings_revision import (
+    ArtifactSummary,
+    SettingsRevisionPreview,
+    build_settings_revision_token,
+    validate_artifact_policy,
+)
 from .storage import ACTIVE_TASK_STATUSES, TaskStore, ValidationError
 from .task_settings_revision import build_task_revision
 
@@ -826,6 +832,49 @@ class EngineApplication:
                 ),
             ), []
 
+        if method == "task.prepare-settings-revision":
+            task_id = str(params.get("taskId") or "").strip()
+            if not task_id:
+                raise ValidationError(
+                    "TASK_ID_REQUIRED",
+                    "taskId is required",
+                )
+            task_input = params.get("input")
+            if not isinstance(task_input, dict):
+                raise ValidationError(
+                    "INVALID_TASK_INPUT",
+                    "input must be an object",
+                )
+            return response_message(
+                request_id,
+                self._prepare_task_settings_revision(
+                    task_id,
+                    task_input=task_input,
+                    output_dir=str(params.get("outputDir") or "").strip(),
+                ),
+            ), []
+
+        if method == "task.commit-settings-revision":
+            task_id = str(params.get("taskId") or "").strip()
+            if not task_id:
+                raise ValidationError(
+                    "TASK_ID_REQUIRED",
+                    "taskId is required",
+                )
+            return response_message(
+                request_id,
+                self._commit_task_settings_revision(
+                    task_id,
+                    token=str(params.get("token") or "").strip(),
+                    artifact_policy=str(
+                        params.get("artifactPolicy") or ""
+                    ).strip(),
+                    operation_id=str(
+                        params.get("operationId") or ""
+                    ).strip(),
+                ),
+            ), []
+
         if method == "task.resume-after-manual":
             task_id = str(params.get("taskId") or "").strip()
             if not task_id:
@@ -1532,6 +1581,196 @@ class EngineApplication:
                 "task": current,
                 "details": details,
             }
+
+    def _prepare_task_settings_revision(
+        self,
+        task_id: str,
+        *,
+        task_input: dict[str, Any],
+        output_dir: str,
+    ) -> dict[str, Any]:
+        clean_output = str(output_dir or "").strip()
+        if not clean_output:
+            raise ValidationError(
+                "OUTPUT_DIR_REQUIRED",
+                "任务设置必须指定输出目录",
+            )
+        task = self.store.get_task(task_id)
+        if task is None:
+            raise ValidationError(
+                "TASK_NOT_FOUND",
+                f"task {task_id} was not found",
+            )
+        if task["status"] != "paused":
+            raise ValidationError(
+                "TASK_NOT_PAUSED",
+                "只有已暂停任务才能生成设置修订预览",
+            )
+        plan = build_task_revision(task, task_input, clean_output)
+        inventory = self.store.settings_artifact_preview(task_id)
+        raw_summary = inventory["artifactSummary"]
+        artifact_summary = ArtifactSummary(
+            completed_policy_count=raw_summary["completedPolicyCount"],
+            completed_batch_count=raw_summary["completedBatchCount"],
+            registered_file_count=raw_summary["registeredFileCount"],
+            eligible_file_count=raw_summary["eligibleFileCount"],
+            protected_file_count=raw_summary["protectedFileCount"],
+            directory_count=raw_summary["directoryCount"],
+            estimated_freed_bytes=raw_summary["estimatedFreedBytes"],
+        )
+        checkpoint = dict(task.get("checkpoint") or {})
+        base_generation = int(checkpoint.get("configGeneration") or 0)
+        token = build_settings_revision_token(
+            task_id=task_id,
+            base_generation=base_generation,
+            base_updated_at=str(task.get("updatedAt") or ""),
+            input=plan.task_input,
+            output_dir=clean_output,
+        )
+        preview = SettingsRevisionPreview(
+            token=token,
+            changed=plan.changed,
+            generation=plan.generation,
+            artifact_summary=artifact_summary,
+            protected_files=inventory["protectedFiles"],
+        )
+        checkpoint["pendingSettingsRevision"] = {
+            "token": token,
+            "baseGeneration": base_generation,
+            "taskInput": plan.task_input,
+            "outputDir": clean_output,
+            "changed": plan.changed,
+            "artifactSummary": raw_summary,
+            "protectedFiles": inventory["protectedFiles"],
+        }
+        self.store.update_task(task_id, checkpoint=checkpoint)
+        return preview.to_dict()
+
+    def _commit_task_settings_revision(
+        self,
+        task_id: str,
+        *,
+        token: str,
+        artifact_policy: str,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        policy = validate_artifact_policy(artifact_policy)
+        task = self.store.get_task(task_id)
+        if task is None:
+            raise ValidationError(
+                "TASK_NOT_FOUND",
+                f"task {task_id} was not found",
+            )
+        if task["status"] != "paused":
+            raise ValidationError(
+                "TASK_NOT_PAUSED",
+                "只有已暂停任务才能提交设置修订",
+            )
+        checkpoint = dict(task.get("checkpoint") or {})
+        pending = checkpoint.get("pendingSettingsRevision")
+        if not isinstance(pending, dict):
+            raise ValidationError(
+                "SETTINGS_REVISION_STALE",
+                "设置修订预览已过期，请重新保存设置",
+            )
+        if (
+            str(pending.get("token") or "") != str(token or "")
+            or int(pending.get("baseGeneration") or 0)
+            != int(checkpoint.get("configGeneration") or 0)
+        ):
+            raise ValidationError(
+                "SETTINGS_REVISION_STALE",
+                "设置修订预览已过期，请重新保存设置",
+            )
+        pending_input = pending.get("taskInput")
+        pending_output = str(pending.get("outputDir") or "").strip()
+        if not isinstance(pending_input, dict) or not pending_output:
+            raise ValidationError(
+                "SETTINGS_REVISION_STALE",
+                "设置修订预览缺少待提交内容",
+            )
+
+        inventory = self.store.settings_artifact_preview(task_id)
+        if policy == "delete":
+            protected = [
+                item
+                for item in inventory.get("protectedFiles") or []
+                if item.get("exists")
+            ]
+            if protected:
+                raise ValidationError(
+                    "TASK_OUTPUT_DELETE_BLOCKED",
+                    "存在受保护或共享文件，不能永久删除当前任务成果",
+                    details={"protectedFiles": protected},
+                )
+            deletion = self.store.permanently_delete_task_outputs(task_id)
+            failed = list(deletion.get("failedFiles") or [])
+            if failed:
+                raise ValidationError(
+                    "TASK_OUTPUT_DELETE_FAILED",
+                    "部分任务成果无法永久删除，原设置保持不变",
+                    details={
+                        "failedFiles": failed,
+                        "freedBytes": deletion.get("freedBytes") or 0,
+                    },
+                )
+            self.store.clear_task_results(task_id)
+
+        task = self.store.get_task(task_id)
+        if task is None:
+            raise ValidationError(
+                "TASK_NOT_FOUND",
+                f"task {task_id} was not found",
+            )
+        plan = build_task_revision(task, pending_input, pending_output)
+        plan_checkpoint = dict(plan.checkpoint)
+        plan_checkpoint.pop("pendingSettingsRevision", None)
+        plan_checkpoint["lastSettingsRevision"] = {
+            "operationId": operation_id,
+            "generation": plan.generation,
+            "changed": plan.changed,
+            "artifactPolicy": policy,
+        }
+        self.store.apply_task_settings_revision(
+            task_id,
+            plan.task_input,
+            plan_checkpoint,
+            output_dir=pending_output,
+            allowed_statuses=frozenset({"paused"}),
+        )
+        manager = (
+            self.single_manager
+            if task["mode"] == "single"
+            else self.batch_manager
+        )
+        lease = self._acquire_browser_lease(task_id, task["mode"])
+        try:
+            details = manager.start(
+                task_id,
+                retry_failed=True,
+                lease_id=str(lease["leaseId"]),
+            )
+        except Exception:
+            if lease.get("acquired"):
+                self.browser_lease.release(lease["leaseId"])
+            raise
+        current = self.store.get_task(task_id)
+        if current is None:
+            raise ValidationError(
+                "TASK_NOT_FOUND",
+                "任务记录已不存在",
+            )
+        return {
+            "changed": plan.changed,
+            "generation": int(
+                (current.get("checkpoint") or {}).get(
+                    "configGeneration"
+                )
+                or 0
+            ),
+            "task": current,
+            "details": details,
+        }
 
     def _wait_for_settings_stop(self, task_id: str) -> bool:
         deadline = time.monotonic() + self._settings_stop_timeout_seconds
