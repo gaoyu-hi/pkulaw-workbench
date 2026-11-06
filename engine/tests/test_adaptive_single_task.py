@@ -357,6 +357,18 @@ class AdaptiveSingleTaskTests(unittest.TestCase):
                 {"value": "2024", "count": 3},
             ]
         )
+        captured_combination_counts: list[int] = []
+
+        def capture_scan_overall(
+            *,
+            combination_index: int,
+            combination_count: int,
+            page: int,
+            total_pages: int,
+        ) -> float:
+            captured_combination_counts.append(int(combination_count))
+            return 0.5
+
         with mock.patch(
             "pkulaw_engine.single_task.SearchActionGovernor",
             return_value=SimpleNamespace(
@@ -370,12 +382,15 @@ class AdaptiveSingleTaskTests(unittest.TestCase):
                     "released_to_boundary": False,
                 },
             ),
+        ), mock.patch(
+            "pkulaw_engine.single_task.single_scan_overall",
+            side_effect=capture_scan_overall,
         ):
             self._run_collect(adapter)
         checkpoint = self.store.get_task(self.task_id)["checkpoint"]
         self.assertGreater(int(checkpoint["combinationCount"]), 2)
         self.assertGreater(
-            int(checkpoint["progressSnapshot"]["totalUnits"]),
+            max(captured_combination_counts),
             2,
         )
 
