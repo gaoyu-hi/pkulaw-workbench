@@ -41,6 +41,7 @@
 - Create `engine/pkulaw_engine/settings_revision.py`: preview/token types and validation helpers.
 - Modify `engine/pkulaw_engine/storage.py`: task-scoped artifact inventory, permanent deletion, and result-table cleanup.
 - Modify `engine/pkulaw_engine/application.py`: prepare/commit settings revision API.
+- Create `engine/pkulaw_engine/search_strategy_version.py`: strict shared strategy parsing.
 - Modify `apps/desktop/src/shared/protocol.ts`, `preload/index.ts`, and `main/ipc.ts`: typed revision APIs.
 - Create `apps/desktop/src/renderer/src/collector-reset.ts`: pure completion transition and default reset helpers.
 - Create `apps/desktop/src/renderer/src/TaskSettingsRevisionDialog.tsx`: artifact choice and final destructive confirmation.
@@ -50,6 +51,7 @@
 - Test: `engine/tests/test_task_settings_revision.py`
 - Test: `apps/desktop/tests/collector-reset.test.ts`
 - Test: `apps/desktop/tests/task-settings-revision-dialog.test.ts`
+- Test: `apps/desktop/tests/task-presentation.test.ts`
 
 ## Task 1: Add Pure Settings Revision Contracts
 
@@ -385,18 +387,170 @@ Do not add a second deletion implementation or another settings schema. If a cro
 
 Document the two artifact policies, permanent deletion, shared-file protection, completion reset, and expected default values for both collectors.
 
-- [ ] **Step 5: Run full verification**
+- [ ] **Step 5: Run integration verification at this checkpoint**
 
 ```powershell
 pnpm test
 pnpm build
 ```
 
-Expected: all Python and Vitest tests pass, typecheck passes, and production build succeeds.
+Expected: all Python and Vitest tests pass, typecheck passes, and production
+build succeeds before the two hardening tasks are applied.
 
 - [ ] **Step 6: Commit**
 
 ```powershell
 git add apps/desktop/tests/collector-lifecycle-integration.test.ts deployment/使用手册.md deployment/故障排查.md docs/PROJECT_STATE.md
 git commit -m "test: verify collector reset and settings lifecycle"
+```
+
+## Task 7: Close Search Strategy and Progress Accounting Gaps
+
+**Files:**
+- Create: `engine/pkulaw_engine/search_strategy_version.py`
+- Modify: `engine/pkulaw_engine/single_task.py`
+- Modify: `engine/pkulaw_engine/batch_task.py`
+- Test: `engine/tests/test_task_manager_controls.py`
+- Test: `engine/tests/test_adaptive_single_task.py`
+- Test: `engine/tests/test_adaptive_batch_task.py`
+
+**Interfaces:**
+- Consumes: task input mappings and the adaptive combination list.
+- Produces:
+  - `parse_search_strategy_version(payload: Mapping[str, Any]) -> int`
+  - `refresh_adaptive_progress_total(total_planned: int, combinations: Sequence[SearchCombination]) -> int`
+
+The parser returns `1` only when the key is absent. Once present, it accepts
+only integer `1` and `2`. It rejects booleans, strings, floats, explicit
+`None`, and unknown integers with
+`INVALID_SEARCH_STRATEGY_VERSION`. The progress helper returns the number of
+remaining adaptive combinations after missing-year filters are appended.
+
+- [ ] **Step 1: Write failing parser and progress tests**
+
+Add:
+
+```text
+test_search_strategy_rejects_boolean_true
+test_search_strategy_rejects_string_and_float
+test_search_strategy_accepts_integer_one_and_two
+test_search_strategy_missing_defaults_to_legacy_one
+test_adaptive_single_total_updates_after_missing_years_append
+test_adaptive_batch_total_updates_after_missing_years_append
+```
+
+Assert progress denominators exceed the initial one-search-per-scope count
+after missing years are added.
+
+- [ ] **Step 2: Run focused tests and confirm failure**
+
+```powershell
+Push-Location engine
+D:\Python\python.exe -X utf8 -m unittest discover -s tests -p "test_task_manager_controls.py" -v
+D:\Python\python.exe -X utf8 -m unittest discover -s tests -p "test_adaptive_single_task.py" -v
+D:\Python\python.exe -X utf8 -m unittest discover -s tests -p "test_adaptive_batch_task.py" -v
+Pop-Location
+```
+
+Expected: FAIL on boolean coercion and stale progress totals.
+
+- [ ] **Step 3: Implement strict parsing and live total refresh**
+
+Replace both private version parsers with the shared helper. Recompute
+`total_planned` immediately after appending missing-year actions and persist
+the new denominator in the progress snapshot.
+
+- [ ] **Step 4: Run focused tests**
+
+Run the commands from Step 2.
+
+Expected: all focused tests pass.
+
+- [ ] **Step 5: Commit**
+
+```powershell
+git add engine/pkulaw_engine/search_strategy_version.py engine/pkulaw_engine/single_task.py engine/pkulaw_engine/batch_task.py engine/tests/test_task_manager_controls.py engine/tests/test_adaptive_single_task.py engine/tests/test_adaptive_batch_task.py
+git commit -m "fix: validate search strategy and refresh progress totals"
+```
+
+## Task 8: Close Boundary UI and Test Gaps
+
+**Files:**
+- Modify: `apps/desktop/src/shared/protocol.ts`
+- Modify: `apps/desktop/src/preload/index.ts`
+- Modify: `apps/desktop/src/main/ipc.ts`
+- Modify: `apps/desktop/src/renderer/src/task-presentation.ts`
+- Modify: `apps/desktop/src/renderer/src/SingleCollectorPanel.tsx`
+- Modify: `apps/desktop/src/renderer/src/BatchCollectorPanel.tsx`
+- Modify: `apps/desktop/src/renderer/src/TaskCenterPanel.tsx`
+- Modify: `engine/tests/test_capture_boundary_controls.py`
+- Modify: `engine/tests/test_adaptive_search_integration.py`
+- Test: `apps/desktop/tests/task-presentation.test.ts`
+
+**Interfaces:**
+- Consumes: existing `CAPTURE_BOUNDARY_REACHED` task state.
+- Produces:
+  - `continueCaptureBoundary(taskId: string, operationId: string): Promise<TaskDetails | BatchTaskDetails>`
+  - boundary secondary action label `保留已完成结果并结束`.
+
+- [ ] **Step 1: Write failing UI and boundary tests**
+
+Assert the renderer creates one `operationId`, forwards it through preload/IPC,
+and suppresses a second commit while busy. Assert the boundary secondary
+button label and that no generic stop label is shown in that state.
+
+Replace direct `manager.controllers[task_id] = controller` setup with a real
+controller created through the public manager lifecycle. In the batch
+integration test, assert zero download starts at the boundary.
+
+- [ ] **Step 2: Run focused tests and confirm failure**
+
+```powershell
+pnpm --dir apps/desktop test -- task-presentation.test.ts
+Push-Location engine
+D:\Python\python.exe -X utf8 -m unittest discover -s tests -p "test_capture_boundary_controls.py" -v
+D:\Python\python.exe -X utf8 -m unittest discover -s tests -p "test_adaptive_search_integration.py" -v
+Pop-Location
+```
+
+Expected: FAIL because operation identity and the boundary stop label are absent.
+
+- [ ] **Step 3: Implement operation identity, label, and test hardening**
+
+Pass a `newOperationId()` from each renderer action, route it through IPC, and
+use the boundary-specific secondary label. Rewrite the private-controller test
+through the public lifecycle and assert zero downloads before boundary
+confirmation.
+
+- [ ] **Step 4: Run focused tests and typecheck**
+
+```powershell
+pnpm --dir apps/desktop test -- task-presentation.test.ts
+pnpm --dir apps/desktop typecheck
+Push-Location engine
+D:\Python\python.exe -X utf8 -m unittest discover -s tests -p "test_capture_boundary_controls.py" -v
+D:\Python\python.exe -X utf8 -m unittest discover -s tests -p "test_adaptive_search_integration.py" -v
+Pop-Location
+```
+
+Expected: all focused tests and typecheck pass.
+
+- [ ] **Step 5: Update final verification and documentation**
+
+Update the manual and troubleshooting notes to include the boundary secondary
+label and retry behavior. Re-run:
+
+```powershell
+pnpm test
+pnpm build
+```
+
+Expected: all Python and Vitest tests pass, typecheck passes, and production
+build succeeds.
+
+- [ ] **Step 6: Commit**
+
+```powershell
+git add apps/desktop/src/shared/protocol.ts apps/desktop/src/preload/index.ts apps/desktop/src/main/ipc.ts apps/desktop/src/renderer/src/task-presentation.ts apps/desktop/src/renderer/src/SingleCollectorPanel.tsx apps/desktop/src/renderer/src/BatchCollectorPanel.tsx apps/desktop/src/renderer/src/TaskCenterPanel.tsx engine/tests/test_capture_boundary_controls.py engine/tests/test_adaptive_search_integration.py apps/desktop/tests/task-presentation.test.ts deployment/使用手册.md deployment/故障排查.md
+git commit -m "fix: harden boundary controls and verification"
 ```
