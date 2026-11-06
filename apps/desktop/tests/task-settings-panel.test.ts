@@ -77,7 +77,8 @@ describe("TaskSettingsPanel", () => {
       keywords: ["人工智能", "数据安全"],
       catalogFormat: "html-xls",
       fullFormat: "docx",
-      outputDir: "D:/输出"
+      outputDir: "D:/输出",
+      searchStrategyVersion: 2
     });
     expect(payload).not.toHaveProperty("previewSnapshot");
   });

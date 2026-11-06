@@ -147,6 +147,7 @@ export function buildTaskSettingsInput(
     timeliness: draft.timeliness,
     pageSize: draft.pageSize,
     ...pageSelectionPayload(draft.pageSelection),
+    searchStrategyVersion: 2,
     ...(mode === "batch"
       ? {
           catalogFormat: draft.catalogFormat,

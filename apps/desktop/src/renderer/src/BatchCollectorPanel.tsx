@@ -442,6 +442,7 @@ export default function BatchCollectorPanel({
           ...pageSelectionPayload(pageSelection),
           catalogFormat,
           fullFormat: "docx",
+          searchStrategyVersion: 2,
           outputDir: outputDir.trim()
         },
         operationId

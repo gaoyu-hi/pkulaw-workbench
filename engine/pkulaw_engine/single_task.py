@@ -101,6 +101,7 @@ class SingleTaskConfig:
     page_size: int
     page_selection: PageSelection
     output_dir: Path
+    search_strategy_version: int = 1
 
     def province_for(self, library: str) -> str:
         return province_for_library(library, self.province)
@@ -3799,6 +3800,20 @@ class SingleTaskManager:
             page_selection,
             dict(task.get("checkpoint") or {}),
         )
+        try:
+            search_strategy_version = int(
+                payload.get("searchStrategyVersion") or 1
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                "INVALID_SEARCH_STRATEGY",
+                "searchStrategyVersion must be 1 or 2",
+            ) from exc
+        if search_strategy_version not in {1, 2}:
+            raise ValidationError(
+                "INVALID_SEARCH_STRATEGY",
+                "searchStrategyVersion must be 1 or 2",
+            )
         output_value = payload.get("outputDir") or task.get("outputDir") or ""
         if not str(output_value).strip():
             raise ValidationError("OUTPUT_DIR_REQUIRED", "逐篇任务必须指定输出目录")
@@ -3812,6 +3827,7 @@ class SingleTaskManager:
             page_size=page_size,
             page_selection=page_selection,
             output_dir=Path(str(output_value)).resolve(),
+            search_strategy_version=search_strategy_version,
         )
 
     @staticmethod
@@ -3826,4 +3842,5 @@ class SingleTaskManager:
             "pageSize": config.page_size,
             **config.page_selection.to_payload(),
             "outputDir": str(config.output_dir),
+            "searchStrategyVersion": config.search_strategy_version,
         }

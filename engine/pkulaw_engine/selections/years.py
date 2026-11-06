@@ -456,6 +456,30 @@ def expand_search_combinations(
     return combinations
 
 
+def initial_adaptive_combinations(
+    queries: Iterable[str],
+    libraries: Iterable[str],
+    selection: YearSelection,
+) -> list[SearchCombination]:
+    if selection.mode != "range":
+        return expand_search_combinations(queries, libraries, selection)
+    combinations: list[SearchCombination] = []
+    for query_index, query in enumerate(queries):
+        for library_index, library in enumerate(libraries):
+            combinations.append(
+                SearchCombination(
+                    query=query,
+                    library=library,
+                    year=ALL_YEARS_LABEL,
+                    query_index=query_index,
+                    library_index=library_index,
+                    year_index=0,
+                    combination_index=len(combinations) + 1,
+                )
+            )
+    return combinations
+
+
 def mark_current_year_status(
     checkpoint: dict[str, Any],
     status: str,

@@ -114,6 +114,7 @@ class BatchTaskConfig:
     output_dir: Path
     catalog_format: str
     full_format: str
+    search_strategy_version: int = 1
 
     def province_for(self, library: str) -> str:
         return province_for_library(library, self.province)
@@ -4978,6 +4979,20 @@ class BatchTaskManager:
             page_selection,
             dict(task.get("checkpoint") or {}),
         )
+        try:
+            search_strategy_version = int(
+                payload.get("searchStrategyVersion") or 1
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                "INVALID_SEARCH_STRATEGY",
+                "searchStrategyVersion must be 1 or 2",
+            ) from exc
+        if search_strategy_version not in {1, 2}:
+            raise ValidationError(
+                "INVALID_SEARCH_STRATEGY",
+                "searchStrategyVersion must be 1 or 2",
+            )
         output_value = payload.get("outputDir") or task.get("outputDir") or ""
         if not str(output_value).strip():
             raise ValidationError("OUTPUT_DIR_REQUIRED", "批量任务必须指定输出目录")
@@ -4993,6 +5008,7 @@ class BatchTaskManager:
             output_dir=Path(str(output_value)).resolve(),
             catalog_format=catalog_format,
             full_format=full_format,
+            search_strategy_version=search_strategy_version,
         )
 
     @staticmethod
@@ -5010,4 +5026,5 @@ class BatchTaskManager:
             "catalogFormat": config.catalog_format,
             "fullFormat": config.full_format,
             "maxBatchSize": 50,
+            "searchStrategyVersion": config.search_strategy_version,
         }

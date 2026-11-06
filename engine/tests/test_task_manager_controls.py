@@ -10,6 +10,10 @@ from pkulaw_engine.controls.task_control import TaskControl
 from pkulaw_engine.logging_utils import JsonLineLogger
 from pkulaw_engine.single_task import SingleTaskManager
 from pkulaw_engine.sources.pkulaw import ManualActionRequired
+from pkulaw_engine.selections.years import (
+    YearSelection,
+    initial_adaptive_combinations,
+)
 from pkulaw_engine.storage import TaskStore, ValidationError
 
 
@@ -100,6 +104,16 @@ class ManagerControlTestBase(unittest.TestCase):
 
 class SingleManagerControlTests(ManagerControlTestBase):
     manager_type = SingleTaskManager
+
+    def test_search_strategy_defaults_to_version_one(self) -> None:
+        task = self.create_task()
+        config = self.manager._parse_config(task)
+        self.assertEqual(config.search_strategy_version, 1)
+
+    def test_search_strategy_accepts_version_two(self) -> None:
+        task = self.create_task(searchStrategyVersion=2)
+        config = self.manager._parse_config(task)
+        self.assertEqual(config.search_strategy_version, 2)
 
     def test_progress_snapshot_counts_completed_and_failed_items(self) -> None:
         task = self.create_task()
@@ -593,6 +607,16 @@ class SingleManagerControlTests(ManagerControlTestBase):
 class BatchManagerControlTests(ManagerControlTestBase):
     manager_type = BatchTaskManager
     mode = "batch"
+
+    def test_search_strategy_defaults_to_version_one(self) -> None:
+        task = self.create_task()
+        config = self.manager._parse_config(task)
+        self.assertEqual(config.search_strategy_version, 1)
+
+    def test_search_strategy_accepts_version_two(self) -> None:
+        task = self.create_task(searchStrategyVersion=2)
+        config = self.manager._parse_config(task)
+        self.assertEqual(config.search_strategy_version, 2)
 
     def test_progress_snapshot_counts_completed_and_failed_batches(self) -> None:
         task = self.create_task()
@@ -1117,6 +1141,40 @@ class BatchManagerControlTests(ManagerControlTestBase):
                 "profileId": "fixture",
             }
             self.manager._validate_resume_for_task()
+
+
+class AdaptiveSearchPlanTests(unittest.TestCase):
+    def test_range_uses_one_all_years_combination_per_scope(self) -> None:
+        selection = YearSelection(
+            mode="range",
+            start_year=1949,
+            end_year=2026,
+        )
+        combinations = initial_adaptive_combinations(
+            ("碳中和",),
+            ("central", "local"),
+            selection,
+        )
+        self.assertEqual(len(combinations), 2)
+        self.assertEqual(
+            [item.year for item in combinations],
+            ["全部年份", "全部年份"],
+        )
+        self.assertTrue(
+            all(item.action_kind == "keyword-submission" for item in combinations)
+        )
+
+    def test_single_and_all_years_keep_existing_expansion(self) -> None:
+        single = YearSelection(mode="single", year=2020)
+        all_years = YearSelection(mode="all")
+        self.assertEqual(
+            [item.year for item in initial_adaptive_combinations(("x",), ("central",), single)],
+            ["2020"],
+        )
+        self.assertEqual(
+            [item.year for item in initial_adaptive_combinations(("x",), ("central",), all_years)],
+            ["全部年份"],
+        )
 
 
 if __name__ == "__main__":

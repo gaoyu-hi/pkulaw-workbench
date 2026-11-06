@@ -464,6 +464,7 @@ export default function SingleCollectorPanel({
           timeliness,
           pageSize,
           ...pageSelectionPayload(pageSelection),
+          searchStrategyVersion: 2,
           outputDir: outputDir.trim()
         },
         operationId
