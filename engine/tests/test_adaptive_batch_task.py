@@ -126,6 +126,7 @@ class FakeAdapter:
         self.select_year_calls: list[str] = []
         self.current_search_request: SearchRequestIdentity | None = None
         self.current_search_session: SearchSession | None = None
+        self.selectors: dict[str, Any] = {"__fake__": True}
 
     def search(self, **kwargs: Any) -> dict[str, Any]:
         self.search_calls.append(dict(kwargs))

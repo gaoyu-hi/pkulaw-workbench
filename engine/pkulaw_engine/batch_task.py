@@ -4886,10 +4886,10 @@ class BatchTaskManager:
         boundary = dict(adaptive.get("boundary") or {})
         scopes = boundary.get("remainingScopes") or []
         if not scopes:
-            return combinations
+            return []
         queries = list(config.queries)
-        result = list(combinations)
-        start_index = len(result)
+        result: list[SearchCombination] = []
+        start_index = 0
         for offset, raw_scope in enumerate(scopes):
             if not isinstance(raw_scope, dict):
                 continue

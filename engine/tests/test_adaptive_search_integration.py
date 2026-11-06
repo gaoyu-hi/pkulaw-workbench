@@ -197,6 +197,46 @@ class AdaptiveSearchIntegrationTests(unittest.TestCase):
             ],
             truncated_year=None,
         )
+
+        completed_batch_keys: list[str] = []
+
+        def complete_batch(
+            store: TaskStore,
+            task_id: str,
+            batch: dict[str, object],
+            index: int,
+            total: int,
+            config: BatchTaskConfig,
+            adapter: object,
+            controller: TaskControl,
+            search_session: object,
+        ) -> None:
+            completed_batch_keys.append(str(batch["batchKey"]))
+            store.upsert_task_batch(
+                task_id,
+                batch_key=str(batch["batchKey"]),
+                query=str(batch["query"]),
+                library=str(batch["library"]),
+                page=int(batch["page"]),
+                row_start=int(batch["rowStart"]),
+                row_end=int(batch["rowEnd"]),
+                status="completed",
+                progress=1.0,
+                catalog_format=str(batch["catalogFormat"]),
+                full_format=str(batch["fullFormat"]),
+                selected=list(batch["selected"]),
+                catalog_path="catalog.xlsx",
+                zip_path="full.zip",
+                report_path="report.json",
+            )
+            manager._set_batch_items_status(
+                store,
+                task_id,
+                list(batch["selected"]),
+                "completed",
+                "batch-completed",
+            )
+
         with (
             mock.patch(
                 "pkulaw_engine.batch_task.PkulawAdapter",
@@ -215,12 +255,15 @@ class AdaptiveSearchIntegrationTests(unittest.TestCase):
                 "pkulaw_engine.batch_task.SearchActionGovernor",
                 return_value=self._governor(),
             ),
+            mock.patch.object(
+                manager,
+                "_process_batch",
+                side_effect=complete_batch,
+            ),
         ):
-            manager._prepare_batches(
-                self.store,
+            manager._run(
                 self.task_id,
                 config,
-                completed_adapter,
                 TaskControl(self.task_id),
             )
 
@@ -228,14 +271,20 @@ class AdaptiveSearchIntegrationTests(unittest.TestCase):
         resumed_adaptive = resumed_task["checkpoint"]["adaptiveSearch"]
         self.assertEqual(resumed_adaptive["missingYears"], [])
         self.assertIn("2023", resumed_adaptive["completedYears"])
+        self.assertEqual(resumed_task["status"], "completed")
         self.assertNotIn(
             "全部年份",
+            [call["year"] for call in completed_adapter.search_calls],
+        )
+        self.assertNotIn(
+            "2022",
             [call["year"] for call in completed_adapter.search_calls],
         )
         self.assertIn(
             "2023",
             [call["year"] for call in completed_adapter.search_calls],
         )
+        self.assertTrue(completed_batch_keys)
 
 
 if __name__ == "__main__":
