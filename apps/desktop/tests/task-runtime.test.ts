@@ -220,6 +220,32 @@ describe("task runtime components", () => {
     expect(failed.match(/<button/g)).toHaveLength(1);
   });
 
+  it("disables the boundary primary action while busy and enables it when idle", () => {
+    const busy = renderToStaticMarkup(
+      React.createElement(TaskPrimaryActionBar, {
+        action: "capture-boundary",
+        label: "继续完整补采",
+        busy: true,
+        feedback: null,
+        onAction: () => undefined
+      })
+    );
+    const idle = renderToStaticMarkup(
+      React.createElement(TaskPrimaryActionBar, {
+        action: "capture-boundary",
+        label: "继续完整补采",
+        busy: false,
+        feedback: null,
+        onAction: () => undefined
+      })
+    );
+
+    expect(busy).toContain("继续完整补采");
+    expect(busy).toMatch(/<button[^>]*disabled/);
+    expect(idle).toContain("继续完整补采");
+    expect(idle).not.toMatch(/disabled/);
+  });
+
   it("renders a complete pause detail dialog", () => {
     const html = renderToStaticMarkup(
       React.createElement(TaskPauseDetailDialog, {
