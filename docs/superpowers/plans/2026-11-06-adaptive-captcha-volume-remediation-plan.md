@@ -178,6 +178,12 @@ def test_unknown_publication_date_is_not_treated_as_in_range() -> None:
     assert row_matches_year_selection({"publicationDate": ""}, selection) is False
 
 def test_missing_years_become_year_filter_actions() -> None:
+    selection = YearSelection(mode="range", start_year=1949, end_year=2023)
+    plan = plan_adaptive_years(
+        selection,
+        [{"value": "2022", "count": 1}, {"value": "2023", "count": 2}],
+        {"2022": 1},
+    )
     actions = build_year_switch_combinations(plan, 0, 0, start_index=3)
     assert [item.year for item in actions] == ["2023"]
     assert [item.action_kind for item in actions] == ["year-filter-switch"]
@@ -478,7 +484,7 @@ git commit -m "feat: add adaptive single-task search path"
   - renderer `continueCaptureBoundary(taskId: string): Promise<TaskDetails | BatchTaskDetails>`
   - primary action kind `capture-boundary`.
 
-Continuation is accepted only for `status == "waiting_manual"` with `error.code == "CAPTURE_BOUNDARY_REACHED"`. It writes `adaptiveSearch.fallbackMode = "A"`, `boundary.confirmedAt`, clears the boundary error, and wakes the existing controller. Repetition with the same operation identity is idempotent.
+Continuation is accepted only for `status == "waiting_manual"` with `error.code == "CAPTURE_BOUNDARY_REACHED"`. It writes `adaptiveSearch.fallbackMode = "A"` and `boundary.confirmedAt`, then clears the boundary error. If the controller is alive, it wakes that controller. If the controller is absent after restart, the application acquires the browser lease and starts the same task from its persisted checkpoint. Repetition with the same operation identity is idempotent.
 
 - [ ] **Step 1: Write failing backend and UI tests**
 
