@@ -44,11 +44,11 @@ class AdaptiveSearchIntegrationTests(unittest.TestCase):
         self.store.close()
         self.tempdir.cleanup()
 
-    def _config(self) -> BatchTaskConfig:
+    def _config(self, library: str = "both") -> BatchTaskConfig:
         return BatchTaskConfig(
             queries=("碳中和",),
             match_mode="keyword",
-            library="both",
+            library=library,
             year_selection=YearSelection(
                 mode="range",
                 start_year=1949,
@@ -92,6 +92,7 @@ class AdaptiveSearchIntegrationTests(unittest.TestCase):
                 {"value": "2023", "count": 1},
             ],
             complete_all_years=True,
+            include_out_of_range_row=True,
         )
         manager = self._manager()
         with mock.patch(
@@ -112,7 +113,17 @@ class AdaptiveSearchIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(adapter.select_year_calls, [])
         self.assertGreaterEqual(len(scans), 2)
-        self.assertGreater(len(self.store.list_task_batches(self.task_id)), 0)
+        self.assertEqual(
+            len(self.store.list_task_batches(self.task_id)),
+            2,
+        )
+        self.assertFalse(
+            any(
+                "-out" in str(row.get("policyId") or "")
+                for batch in self.store.list_task_batches(self.task_id)
+                for row in (batch.get("selected") or [])
+            )
+        )
         checkpoint = self.store.get_task(self.task_id)["checkpoint"]
         adaptive = checkpoint["adaptiveSearch"]
         self.assertEqual(
@@ -122,6 +133,7 @@ class AdaptiveSearchIntegrationTests(unittest.TestCase):
         self.assertEqual(adaptive["missingYears"], [])
 
     def test_boundary_resume_continues_only_missing_scope(self) -> None:
+        config = self._config(library="local")
         adapter = FakeAdapter(
             year_entries=[
                 {"value": "2022", "count": 1},
@@ -151,7 +163,7 @@ class AdaptiveSearchIntegrationTests(unittest.TestCase):
         ):
             manager._run(
                 self.task_id,
-                self._config(),
+                config,
                 TaskControl(self.task_id),
             )
 
@@ -167,23 +179,63 @@ class AdaptiveSearchIntegrationTests(unittest.TestCase):
             0,
         )
 
-        controller = TaskControl(self.task_id)
-        controller.request_continue = mock.Mock()
-        controller.thread = SimpleNamespace(is_alive=lambda: True)
-        manager.controllers[self.task_id] = controller
-
         manager.continue_capture_boundary(self.task_id)
         after = self.store.get_task(self.task_id)
         self.assertEqual(after["checkpoint"]["adaptiveSearch"]["fallbackMode"], "A")
         self.assertIn("confirmedAt", after["checkpoint"]["adaptiveSearch"]["boundary"])
-        controller.request_continue.assert_called_once_with()
 
         repeated = manager.continue_capture_boundary(self.task_id)
         self.assertEqual(
             repeated["task"]["checkpoint"]["adaptiveSearch"]["fallbackMode"],
             "A",
         )
-        controller.request_continue.assert_called_once_with()
+
+        completed_adapter = FakeAdapter(
+            year_entries=[
+                {"value": "2022", "count": 1},
+                {"value": "2023", "count": 1},
+            ],
+            truncated_year=None,
+        )
+        with (
+            mock.patch(
+                "pkulaw_engine.batch_task.PkulawAdapter",
+                return_value=completed_adapter,
+            ),
+            mock.patch.object(
+                manager.browser_bridge,
+                "state",
+                return_value={
+                    "captchaVisible": False,
+                    "loginVisible": False,
+                    "authenticated": True,
+                },
+            ),
+            mock.patch(
+                "pkulaw_engine.batch_task.SearchActionGovernor",
+                return_value=self._governor(),
+            ),
+        ):
+            manager._prepare_batches(
+                self.store,
+                self.task_id,
+                config,
+                completed_adapter,
+                TaskControl(self.task_id),
+            )
+
+        resumed_task = self.store.get_task(self.task_id)
+        resumed_adaptive = resumed_task["checkpoint"]["adaptiveSearch"]
+        self.assertEqual(resumed_adaptive["missingYears"], [])
+        self.assertIn("2023", resumed_adaptive["completedYears"])
+        self.assertNotIn(
+            "全部年份",
+            [call["year"] for call in completed_adapter.search_calls],
+        )
+        self.assertIn(
+            "2023",
+            [call["year"] for call in completed_adapter.search_calls],
+        )
 
 
 if __name__ == "__main__":

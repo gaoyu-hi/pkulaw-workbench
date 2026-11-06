@@ -1430,13 +1430,35 @@ class BatchTaskManager:
                     libraries,
                     config.year_selection,
                 )
-        combination_count = len(combinations)
         adaptive_mode = config.search_strategy_version >= 2
+        if adaptive_mode:
+            combinations = self._append_capture_boundary_resume_combinations(
+                config=config,
+                initial_checkpoint=initial_checkpoint,
+                combinations=combinations,
+            )
+        combination_count = len(combinations)
         governor = SearchActionGovernor() if adaptive_mode else None
         adaptive_scope_states: dict[
             tuple[str, str],
             dict[str, Any],
         ] = {}
+        persisted_adaptive = dict(
+            initial_checkpoint.get("adaptiveSearch") or {}
+        )
+        for scope_key, persisted_scope in (
+            persisted_adaptive.get("scopeStates") or {}
+        ).items():
+            if not isinstance(scope_key, str) or "|" not in scope_key:
+                continue
+            query, library = scope_key.split("|", 1)
+            scope_state = dict(persisted_scope or {})
+            adaptive_scope_states[(query, library)] = {
+                "collected": dict(scope_state.get("collected") or {}),
+                "plan": None,
+                "truncated": False,
+                "entries": list(scope_state.get("entries") or []),
+            }
         adaptive_completed_years: list[str] = []
         adaptive_missing_years: list[str] = []
         adaptive_boundary: dict[str, Any] = {}
@@ -1884,16 +1906,11 @@ class BatchTaskManager:
                                 year_stats
                             )
                         ),
-                        remaining_scopes=(
-                            {
-                                "query": query,
-                                "library": library,
-                                "year": year,
-                                "province": (
-                                    combination.province
-                                    or config.province_for(library)
-                                ),
-                            },
+                        remaining_scopes=tuple(
+                            self._adaptive_remaining_scopes(
+                                adaptive_scope_states,
+                                config,
+                            )
                         ),
                         estimated_result_operations=1,
                         detected_at=time.strftime(
@@ -4802,6 +4819,13 @@ class BatchTaskManager:
             completed_years.update(plan.completed_years)
             missing_years.update(plan.missing_years)
         snapshot = governor.snapshot() if governor is not None else {}
+        scope_states = {
+            f"{query}|{library}": {
+                "entries": list(scope_state.get("entries") or []),
+                "collected": dict(scope_state.get("collected") or {}),
+            }
+            for (query, library), scope_state in adaptive_scope_states.items()
+        }
         return {
             "keywordSubmissions": int(
                 snapshot.get("keyword_submissions") or 0
@@ -4814,7 +4838,85 @@ class BatchTaskManager:
             "missingYears": sorted(missing_years),
             "fallbackMode": "A" if boundary else "C",
             "boundary": boundary,
+            "scopeStates": scope_states,
         }
+
+    def _adaptive_remaining_scopes(
+        self,
+        adaptive_scope_states: dict[tuple[str, str], dict[str, Any]],
+        config: BatchTaskConfig,
+    ) -> list[dict[str, Any]]:
+        remaining: list[dict[str, Any]] = []
+        queries = list(config.queries)
+        for (query, library), scope_state in adaptive_scope_states.items():
+            plan = plan_adaptive_years(
+                config.year_selection,
+                scope_state.get("entries") or [],
+                scope_state.get("collected") or {},
+                query=query,
+                library=library,
+            )
+            query_index = (
+                queries.index(query) if query in queries else 0
+            )
+            library_index = 0 if library == "central" else 1
+            for year in plan.missing_years:
+                remaining.append(
+                    {
+                        "query": query,
+                        "library": library,
+                        "year": year,
+                        "province": config.province_for(library),
+                        "queryIndex": query_index,
+                        "libraryIndex": library_index,
+                    }
+                )
+        return remaining
+
+    def _append_capture_boundary_resume_combinations(
+        self,
+        *,
+        config: BatchTaskConfig,
+        initial_checkpoint: dict[str, Any],
+        combinations: list[SearchCombination],
+    ) -> list[SearchCombination]:
+        adaptive = dict(initial_checkpoint.get("adaptiveSearch") or {})
+        if adaptive.get("fallbackMode") != "A":
+            return combinations
+        boundary = dict(adaptive.get("boundary") or {})
+        scopes = boundary.get("remainingScopes") or []
+        if not scopes:
+            return combinations
+        queries = list(config.queries)
+        result = list(combinations)
+        start_index = len(result)
+        for offset, raw_scope in enumerate(scopes):
+            if not isinstance(raw_scope, dict):
+                continue
+            query = str(raw_scope.get("query") or "").strip()
+            library = str(raw_scope.get("library") or "").strip()
+            year = str(raw_scope.get("year") or "").strip()
+            if not query or not library or not year:
+                continue
+            query_index = int(raw_scope.get("queryIndex") or 0)
+            if query not in queries:
+                query_index = 0
+            library_index = int(raw_scope.get("libraryIndex") or 0)
+            result.append(
+                SearchCombination(
+                    query=query,
+                    library=library,
+                    year=year,
+                    query_index=query_index,
+                    library_index=library_index,
+                    year_index=offset,
+                    combination_index=start_index + offset + 1,
+                    province=str(raw_scope.get("province") or ""),
+                    partition_key=str(raw_scope.get("partitionKey") or ""),
+                    action_kind="year-filter-switch",
+                )
+            )
+        return result
 
     def _append_adaptive_missing_year_combinations(
         self,

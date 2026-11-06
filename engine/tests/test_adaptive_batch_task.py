@@ -28,8 +28,10 @@ ALL_YEARS = "全部年份"
 
 
 def _row(policy_id: str, year: str) -> dict[str, Any]:
+    suffix = policy_id.rsplit("-", 1)[-1]
+    number = int(suffix) if suffix.isdigit() else 1
     return {
-        "number": int(policy_id.rsplit("-", 1)[-1]),
+        "number": number,
         "policyId": policy_id,
         "title": f"政策 {policy_id}",
         "url": f"https://example.test/{policy_id}.html",
@@ -114,10 +116,12 @@ class FakeAdapter:
         year_entries: list[dict[str, Any]] | None = None,
         truncated_year: str | None = None,
         complete_all_years: bool = False,
+        include_out_of_range_row: bool = False,
     ) -> None:
         self.year_entries = year_entries or []
         self.truncated_year = truncated_year
         self.complete_all_years = complete_all_years
+        self.include_out_of_range_row = include_out_of_range_row
         self.search_calls: list[dict[str, Any]] = []
         self.select_year_calls: list[str] = []
         self.current_search_request: SearchRequestIdentity | None = None
@@ -133,8 +137,18 @@ class FakeAdapter:
                 dict(_row(f"{library}-{query}-1", "2022")),
                 dict(_row(f"{library}-{query}-2", "2023")),
             ]
+            if self.include_out_of_range_row:
+                rows.append(
+                    dict(_row(f"{library}-{query}-out", "1948"))
+                )
         else:
-            rows = [dict(_row(f"{library}-{query}-1", "2022"))]
+            row_year = "2022" if kwargs["year"] == ALL_YEARS else year
+            row_id = (
+                f"{library}-{query}-1"
+                if kwargs["year"] == ALL_YEARS
+                else f"{library}-{query}-{year}-1"
+            )
+            rows = [dict(_row(row_id, row_year))]
         if kwargs["year"] == ALL_YEARS:
             if self.complete_all_years:
                 result_count = len(rows)
@@ -166,14 +180,20 @@ class FakeAdapter:
         if request is None:
             raise RuntimeError("no request")
         rows = [dict(_row(f"{request.library}-{request.query}-{year}", year))]
+        if self.truncated_year and year == self.truncated_year:
+            result_count = 201
+            reported_total_pages = 2
+        else:
+            result_count = len(rows)
+            reported_total_pages = 1
         state = _state(
             search_id=f"year-{year}",
             query=request.query,
             library=request.library,
             year=year,
             rows=rows,
-            result_count=len(rows),
-            reported_total_pages=1,
+            result_count=result_count,
+            reported_total_pages=reported_total_pages,
         )
         self._attach(state, request.query, request.library, year)
         return state
