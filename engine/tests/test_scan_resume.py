@@ -411,15 +411,9 @@ class ScanResumeTests(unittest.TestCase):
                         controller,
                     )
 
-                journal = ScanJournal(
-                    root
-                    / "cache"
-                    / "task-scans"
-                    / f"{task_id}.jsonl",
-                    task_id=task_id,
-                    config_fingerprint=config_fingerprint(
-                        manager._config_payload(config)  # noqa: SLF001
-                    ),
+                journal = manager._scan_journal(  # noqa: SLF001
+                    task_id,
+                    config,
                 )
                 self.assertEqual(
                     [record["page"] for record in journal.read()],
@@ -573,12 +567,9 @@ class ScanResumeTests(unittest.TestCase):
                     / "task-scans"
                     / f"{task_id}.jsonl"
                 )
-                journal = ScanJournal(
-                    journal_path,
-                    task_id=task_id,
-                    config_fingerprint=config_fingerprint(
-                        manager._config_payload(config)  # noqa: SLF001
-                    ),
+                journal = manager._scan_journal(  # noqa: SLF001
+                    task_id,
+                    config,
                 )
                 old_state = _state(1, "search-old")
                 old_session = SearchSession.from_dict(
@@ -695,15 +686,9 @@ class ScanResumeTests(unittest.TestCase):
                 )
                 state = _state(1, "search-limit")
                 session = SearchSession.from_dict(state["searchSession"])
-                journal = ScanJournal(
-                    root
-                    / "cache"
-                    / "task-scans"
-                    / f"{task_id}.jsonl",
-                    task_id=task_id,
-                    config_fingerprint=config_fingerprint(
-                        manager._config_payload(config)  # noqa: SLF001
-                    ),
+                journal = manager._scan_journal(  # noqa: SLF001
+                    task_id,
+                    config,
                 )
                 journal.append(
                     {

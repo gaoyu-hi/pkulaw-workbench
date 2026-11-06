@@ -33,7 +33,13 @@ from .progress import (
     single_download_overall,
     single_scan_overall,
 )
-from .scan_journal import ScanJournal, ScanJournalError, config_fingerprint
+from .scan_journal import (
+    ScanJournal,
+    ScanJournalError,
+    config_fingerprint,
+    legacy_page_mode_fingerprints,
+    scan_universe_fingerprint,
+)
 from .search_recovery import (
     CheckpointedActionResultRunner,
     SearchRecoveryBoundaryRequired,
@@ -1257,7 +1263,11 @@ class SingleTaskManager:
         adaptive_boundary = dict(
             persisted_adaptive.get("boundary") or {}
         )
-        journal = self._scan_journal(task_id, config)
+        journal = self._scan_journal(
+            task_id,
+            config,
+            checkpoint=initial_checkpoint,
+        )
         journal_records = journal.read()
         records_by_combination: dict[
             tuple[str, str, str, str],
@@ -3120,16 +3130,43 @@ class SingleTaskManager:
         self,
         task_id: str,
         config: SingleTaskConfig,
+        checkpoint: dict[str, Any] | None = None,
     ) -> ScanJournal:
+        checkpoint = dict(checkpoint or {})
+        canonical_payload = self._scan_universe_payload(config)
+        canonical = scan_universe_fingerprint(canonical_payload)
+        stored = str(
+            dict(checkpoint.get("scanJournal") or {}).get(
+                "configFingerprint"
+            )
+            or ""
+        )
+        legacy_variants = legacy_page_mode_fingerprints(
+            self._config_payload(config),
+            max_pages_values=(
+                int(checkpoint.get("pageLimitMaxPages") or 0),
+                int(config.page_selection.max_pages or 0),
+            ),
+        )
+        accepted = tuple(
+            legacy_variants
+            - {
+                canonical,
+                *(
+                    (stored,)
+                    if stored and stored not in legacy_variants
+                    else ()
+                ),
+            }
+        )
         return ScanJournal(
             self.database_path.parent
             / "cache"
             / "task-scans"
             / f"{safe_filename(task_id, 80)}.jsonl",
             task_id=task_id,
-            config_fingerprint=config_fingerprint(
-                self._config_payload(config)
-            ),
+            config_fingerprint=canonical,
+            accepted_fingerprints=accepted,
         )
 
     def _restart_scan_for_year_count_drift(
@@ -3473,7 +3510,14 @@ class SingleTaskManager:
         task_id: str,
         config: SingleTaskConfig,
     ) -> dict[str, Any]:
-        summary = self._scan_journal(task_id, config).seal()
+        summary = self._scan_journal(
+            task_id,
+            config,
+            checkpoint=dict(
+                (store.get_task(task_id) or {}).get("checkpoint")
+                or {}
+            ),
+        ).seal()
         task = store.get_task(task_id)
         if task is None:
             raise ValidationError(
@@ -4499,6 +4543,22 @@ class SingleTaskManager:
             output_dir=Path(str(output_value)).resolve(),
             search_strategy_version=search_strategy_version,
         )
+
+    @staticmethod
+    def _scan_universe_payload(
+        config: SingleTaskConfig,
+    ) -> dict[str, Any]:
+        return {
+            "queries": list(config.queries),
+            "matchMode": config.match_mode,
+            "library": config.library,
+            "yearMode": config.year_selection.mode,
+            "yearStart": config.year_selection.start_year,
+            "yearEnd": config.year_selection.end_year,
+            "province": config.province,
+            "timeliness": config.timeliness,
+            "pageSize": config.page_size,
+        }
 
     @staticmethod
     def _config_payload(config: SingleTaskConfig) -> dict[str, Any]:

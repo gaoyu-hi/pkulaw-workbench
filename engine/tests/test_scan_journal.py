@@ -5,7 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pkulaw_engine.scan_journal import ScanJournal, ScanJournalError
+from pkulaw_engine.scan_journal import (
+    SCAN_UNIVERSE_FINGERPRINT_VERSION,
+    ScanJournal,
+    ScanJournalError,
+    scan_universe_fingerprint,
+)
 
 
 def _page(page: int, *, config: str = "config-1") -> dict[str, object]:
@@ -102,6 +107,77 @@ class ScanJournalTests(unittest.TestCase):
             changed.read()
 
         self.assertEqual(context.exception.code, "SCAN_JOURNAL_CONFIG_MISMATCH")
+
+    def test_page_mode_does_not_change_scan_universe_fingerprint(
+        self,
+    ) -> None:
+        last = {
+            "queries": ["人工智能"],
+            "pageSize": 20,
+            "pageMode": "last",
+            "pageSelection": {"mode": "last"},
+            "maxPages": None,
+        }
+        limit = {
+            "queries": ["人工智能"],
+            "pageSize": 20,
+            "pageMode": "limit",
+            "pageSelection": {"mode": "limit", "maxPages": 1},
+            "maxPages": 1,
+        }
+
+        self.assertEqual(
+            scan_universe_fingerprint(last),
+            scan_universe_fingerprint(limit),
+        )
+        self.assertEqual(SCAN_UNIVERSE_FINGERPRINT_VERSION, 2)
+
+    def test_page_size_and_query_change_the_scan_universe(self) -> None:
+        base = scan_universe_fingerprint(
+            {"queries": ["人工智能"], "pageSize": 20}
+        )
+        self.assertNotEqual(
+            base,
+            scan_universe_fingerprint(
+                {"queries": ["碳中和"], "pageSize": 20}
+            ),
+        )
+        self.assertNotEqual(
+            base,
+            scan_universe_fingerprint(
+                {"queries": ["人工智能"], "pageSize": 50}
+            ),
+        )
+
+    def test_legacy_fingerprint_is_accepted_and_audited(self) -> None:
+        canonical = scan_universe_fingerprint(
+            {"queries": ["人工智能"], "pageSize": 20}
+        )
+        journal = ScanJournal(
+            self.journal.path,
+            task_id="task-1",
+            config_fingerprint=canonical,
+            accepted_fingerprints=("legacy-limit-fingerprint",),
+        )
+        journal.path.write_text(
+            json.dumps(
+                _page(1, config="legacy-limit-fingerprint"),
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual(len(journal.read()), 1)
+        summary = journal.checkpoint_summary()
+        self.assertEqual(
+            summary["configFingerprint"],
+            canonical,
+        )
+        self.assertEqual(
+            summary["acceptedLegacyFingerprints"],
+            ["legacy-limit-fingerprint"],
+        )
 
     def test_search_identity_mismatch_fails_closed(self) -> None:
         self.journal.append(_page(1))

@@ -373,15 +373,9 @@ class BatchScanResumeTests(unittest.TestCase):
                         controller,
                     )
 
-                journal = ScanJournal(
-                    root
-                    / "cache"
-                    / "task-scans"
-                    / f"{task_id}.jsonl",
-                    task_id=task_id,
-                    config_fingerprint=config_fingerprint(
-                        manager._config_payload(config)  # noqa: SLF001
-                    ),
+                journal = manager._scan_journal(  # noqa: SLF001
+                    task_id,
+                    config,
                 )
                 self.assertEqual(
                     [record["page"] for record in journal.read()],
@@ -517,12 +511,9 @@ class BatchScanResumeTests(unittest.TestCase):
                     / "task-scans"
                     / f"{task_id}.jsonl"
                 )
-                journal = ScanJournal(
-                    journal_path,
-                    task_id=task_id,
-                    config_fingerprint=config_fingerprint(
-                        manager._config_payload(config)  # noqa: SLF001
-                    ),
+                journal = manager._scan_journal(  # noqa: SLF001
+                    task_id,
+                    config,
                 )
                 old_state = _batch_state(1, "batch-old")
                 old_session = SearchSession.from_dict(

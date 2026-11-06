@@ -3,12 +3,27 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 SCAN_JOURNAL_SCHEMA_VERSION = 1
+SCAN_UNIVERSE_FINGERPRINT_VERSION = 2
+_SCAN_NON_UNIVERSE_KEYS = frozenset(
+    {
+        "fingerprintVersion",
+        "pageMode",
+        "pageSelection",
+        "maxPages",
+        "outputDir",
+        "catalogFormat",
+        "fullFormat",
+        "maxBatchSize",
+        "searchStrategyVersion",
+    }
+)
 
 
 class ScanJournalError(RuntimeError):
@@ -27,6 +42,55 @@ def config_fingerprint(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def scan_universe_fingerprint(payload: dict[str, Any]) -> str:
+    canonical = {
+        key: value
+        for key, value in payload.items()
+        if key not in _SCAN_NON_UNIVERSE_KEYS
+    }
+    canonical["fingerprintVersion"] = (
+        SCAN_UNIVERSE_FINGERPRINT_VERSION
+    )
+    return config_fingerprint(canonical)
+
+
+def legacy_page_mode_fingerprints(
+    payload: dict[str, Any],
+    *,
+    max_pages_values: Iterable[int] = (),
+) -> frozenset[str]:
+    candidates: set[str] = set()
+    last = deepcopy(payload)
+    last.update(
+        {
+            "pageMode": "last",
+            "pageSelection": {"mode": "last"},
+            "maxPages": None,
+        }
+    )
+    candidates.add(config_fingerprint(last))
+    limits = {
+        int(value)
+        for value in max_pages_values
+        if value is not None and int(value) > 0
+    }
+    limits.add(1)
+    for max_pages in limits:
+        limited = deepcopy(payload)
+        limited.update(
+            {
+                "pageMode": "limit",
+                "pageSelection": {
+                    "mode": "limit",
+                    "maxPages": max_pages,
+                },
+                "maxPages": max_pages,
+            }
+        )
+        candidates.add(config_fingerprint(limited))
+    return frozenset(candidates)
+
+
 class ScanJournal:
     def __init__(
         self,
@@ -34,10 +98,21 @@ class ScanJournal:
         *,
         task_id: str,
         config_fingerprint: str,
+        accepted_fingerprints: Iterable[str] = (),
     ) -> None:
         self.path = Path(path)
         self.task_id = str(task_id)
         self.config_fingerprint = str(config_fingerprint)
+        self.accepted_fingerprints = frozenset(
+            {
+                self.config_fingerprint,
+                *(
+                    str(value)
+                    for value in accepted_fingerprints
+                    if str(value)
+                ),
+            }
+        )
         self._summary_cache: dict[str, Any] | None = None
 
     @property
@@ -147,6 +222,15 @@ class ScanJournal:
             "schemaVersion": SCAN_JOURNAL_SCHEMA_VERSION,
             "taskId": self.task_id,
             "configFingerprint": self.config_fingerprint,
+            "acceptedLegacyFingerprints": sorted(
+                {
+                    str(record.get("configFingerprint") or "")
+                    for record in records
+                    if str(record.get("configFingerprint") or "")
+                    and str(record.get("configFingerprint"))
+                    != self.config_fingerprint
+                }
+            ),
             "reason": str(reason),
             "quarantinedAt": datetime.now(timezone.utc).isoformat(),
             "records": len(records),
@@ -250,6 +334,15 @@ class ScanJournal:
             "schemaVersion": SCAN_JOURNAL_SCHEMA_VERSION,
             "path": str(self.path),
             "configFingerprint": self.config_fingerprint,
+            "acceptedLegacyFingerprints": sorted(
+                {
+                    str(record.get("configFingerprint") or "")
+                    for record in records
+                    if str(record.get("configFingerprint") or "")
+                    and str(record.get("configFingerprint"))
+                    != self.config_fingerprint
+                }
+            ),
             "completedPages": completed_pages,
             "combinations": list(combinations.values()),
             "lastStableSession": (
@@ -348,6 +441,24 @@ class ScanJournal:
                 "sealed": False,
             }
         )
+        fingerprint = str(record.get("configFingerprint") or "")
+        if (
+            fingerprint
+            and fingerprint != self.config_fingerprint
+        ):
+            accepted = {
+                *[
+                    str(value)
+                    for value in self._summary_cache.get(
+                        "acceptedLegacyFingerprints"
+                    )
+                    or []
+                ],
+                fingerprint,
+            }
+            self._summary_cache[
+                "acceptedLegacyFingerprints"
+            ] = sorted(accepted)
 
     def seal(self) -> dict[str, Any]:
         self.read()
@@ -368,6 +479,10 @@ class ScanJournal:
                             "schemaVersion": SCAN_JOURNAL_SCHEMA_VERSION,
                             "taskId": self.task_id,
                             "configFingerprint": self.config_fingerprint,
+                            "acceptedLegacyFingerprints": sorted(
+                                self.accepted_fingerprints
+                                - {self.config_fingerprint}
+                            ),
                         },
                         ensure_ascii=False,
                         sort_keys=True,
@@ -429,9 +544,8 @@ class ScanJournal:
                 "SCAN_JOURNAL_TASK_MISMATCH",
                 "扫描日志不属于当前任务",
             )
-        if (
-            str(payload.get("configFingerprint") or "")
-            != self.config_fingerprint
+        if str(payload.get("configFingerprint") or "") not in (
+            self.accepted_fingerprints
         ):
             raise ScanJournalError(
                 "SCAN_JOURNAL_CONFIG_MISMATCH",
