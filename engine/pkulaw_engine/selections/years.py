@@ -411,6 +411,7 @@ class SearchCombination:
     province: str = ""
     timeliness: str = ""
     partition_key: str = ""
+    action_kind: str = "keyword-submission"
 
     def checkpoint(self) -> dict[str, Any]:
         return {
@@ -425,6 +426,7 @@ class SearchCombination:
             "province": self.province,
             "timeliness": self.timeliness,
             "partitionKey": self.partition_key,
+            "actionKind": self.action_kind,
             "page": 1,
             "currentAction": "search",
         }
