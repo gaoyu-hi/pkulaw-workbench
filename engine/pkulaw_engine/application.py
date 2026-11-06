@@ -670,6 +670,21 @@ class EngineApplication:
                 self.single_manager.continue_to_last(task_id),
             ), []
 
+        if method in {
+            "single.continue-capture-boundary",
+            "batch.continue-capture-boundary",
+        }:
+            task_id = str(params.get("taskId") or "").strip()
+            if not task_id:
+                raise ValidationError("TASK_ID_REQUIRED", "taskId is required")
+            return response_message(
+                request_id,
+                self._continue_capture_boundary(
+                    task_id,
+                    operation_id=str(params.get("operationId") or "").strip(),
+                ),
+            ), []
+
         if method == "single.choose-candidate":
             task_id = str(params.get("taskId") or "").strip()
             item_id = str(params.get("itemId") or "").strip()
@@ -759,6 +774,18 @@ class EngineApplication:
             if not task_id:
                 raise ValidationError("TASK_ID_REQUIRED", "taskId is required")
             return response_message(request_id, self.batch_manager.details(task_id)), []
+
+        if method == "task.continue-capture-boundary":
+            task_id = str(params.get("taskId") or "").strip()
+            if not task_id:
+                raise ValidationError("TASK_ID_REQUIRED", "taskId is required")
+            return response_message(
+                request_id,
+                self._continue_capture_boundary(
+                    task_id,
+                    operation_id=str(params.get("operationId") or "").strip(),
+                ),
+            ), []
 
         if method == "task.details":
             task_id = str(params.get("taskId") or "").strip()
@@ -1717,6 +1744,74 @@ class EngineApplication:
                     task_id,
                     lease_id=lease["leaseId"],
                 )
+            except Exception:
+                if lease.get("acquired"):
+                    self.browser_lease.release(lease["leaseId"])
+                raise
+            self._remember_operation(
+                cache_key if operation_id else "",
+                fingerprint,
+                task_id,
+            )
+            return details
+
+    def _continue_capture_boundary(
+        self,
+        task_id: str,
+        *,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        fingerprint = json.dumps(
+            {"taskId": task_id, "action": "continue-capture-boundary"},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        cache_key = f"capture-boundary.continue:{operation_id}"
+        with self._operation_lock:
+            cached = self._operation_lookup(
+                cache_key if operation_id else "",
+                fingerprint,
+            )
+            if cached is not None:
+                task = self.store.get_task(task_id)
+                if task is None:
+                    raise ValidationError(
+                        "TASK_NOT_FOUND",
+                        "任务记录已不存在",
+                    )
+                return self._task_details(task)
+
+            task = self.store.get_task(task_id)
+            if task is None:
+                raise ValidationError(
+                    "TASK_NOT_FOUND",
+                    f"task {task_id} was not found",
+                )
+            if (
+                task["status"] != "waiting_manual"
+                or (task.get("error") or {}).get("code")
+                != "CAPTURE_BOUNDARY_REACHED"
+            ):
+                raise ValidationError(
+                    "CAPTURE_BOUNDARY_NOT_AVAILABLE",
+                    "当前没有待确认的完整采集边界",
+                )
+            manager = (
+                self.single_manager
+                if task["mode"] == "single"
+                else self.batch_manager
+            )
+            lease = self._acquire_browser_lease(task_id, task["mode"])
+            try:
+                manager.continue_capture_boundary(task_id)
+                if not manager.has_live_controller(task_id):
+                    details = manager.start(
+                        task_id,
+                        retry_failed=False,
+                        lease_id=lease["leaseId"],
+                    )
+                else:
+                    details = manager.details(task_id)
             except Exception:
                 if lease.get("acquired"):
                     self.browser_lease.release(lease["leaseId"])

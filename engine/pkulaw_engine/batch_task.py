@@ -519,6 +519,62 @@ class BatchTaskManager:
             store.close()
         return self.details(task_id)
 
+    def continue_capture_boundary(self, task_id: str) -> dict[str, Any]:
+        with self.lock:
+            controller = self.controllers.get(task_id)
+        store = TaskStore(self.database_path)
+        try:
+            task = store.get_task(task_id)
+            if task is None:
+                raise ValidationError("TASK_NOT_FOUND", f"task {task_id} was not found")
+            if task["mode"] != "batch":
+                raise ValidationError(
+                    "TASK_MODE_MISMATCH",
+                    "该任务不是批量任务",
+                )
+            checkpoint = dict(task.get("checkpoint") or {})
+            adaptive = dict(checkpoint.get("adaptiveSearch") or {})
+            boundary = dict(adaptive.get("boundary") or {})
+            if adaptive.get("fallbackMode") == "A" and boundary.get("confirmedAt"):
+                return self.details(task_id)
+            if (
+                task["status"] != "waiting_manual"
+                or (task.get("error") or {}).get("code")
+                != "CAPTURE_BOUNDARY_REACHED"
+            ):
+                raise ValidationError(
+                    "CAPTURE_BOUNDARY_NOT_AVAILABLE",
+                    "当前没有待确认的完整采集边界",
+                )
+            boundary["confirmedAt"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ",
+                time.gmtime(),
+            )
+            adaptive.update(
+                {
+                    "fallbackMode": "A",
+                    "boundary": boundary,
+                    "currentAction": "capture-boundary-continued",
+                }
+            )
+            checkpoint["adaptiveSearch"] = adaptive
+            self._update_task(
+                store,
+                task_id,
+                current_stage="capture-boundary-continued",
+                clear_error=True,
+                checkpoint=checkpoint,
+            )
+            if controller and controller.thread and controller.thread.is_alive():
+                controller.request_continue()
+                self._emit(
+                    "batch.capture-boundary-continue",
+                    {"taskId": task_id},
+                )
+        finally:
+            store.close()
+        return self.details(task_id)
+
     def has_live_controller(self, task_id: str) -> bool:
         with self.lock:
             controller = self.controllers.get(task_id)

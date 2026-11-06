@@ -348,6 +348,8 @@ export default function SingleCollectorPanel({
       ? "已处理，继续"
       : primaryAction === "redetect"
         ? "重新检测并继续"
+        : primaryAction === "capture-boundary"
+          ? "继续完整补采"
         : primaryAction === "resume-from-checkpoint"
           ? retryLabel
           : "";
@@ -526,6 +528,7 @@ export default function SingleCollectorPanel({
       | "stop"
       | "continue"
       | "continueToLast"
+      | "continueBoundary"
       | "retry"
   ): Promise<void> {
     if (!selectedTaskId) return;
@@ -564,6 +567,13 @@ export default function SingleCollectorPanel({
       } else if (action === "continueToLast") {
         setDetails(await window.pkulaw.continueSingleToLast(selectedTaskId));
         setNotice("已确认扫描当前检索组合到尾页，分页模式将持久保存。");
+      } else if (action === "continueBoundary") {
+        setDetails(
+          (await window.pkulaw.continueCaptureBoundary(
+            selectedTaskId
+          )) as TaskDetails
+        );
+        setNotice("已确认完整补采，任务只处理尚未完成的年份和省份。");
       } else {
         if (
           details?.task.status === "waiting_manual" &&
@@ -606,6 +616,10 @@ export default function SingleCollectorPanel({
         message: "正在重新检测浏览器状态。"
       });
       retryManualRecovery();
+      return;
+    }
+    if (primaryAction === "capture-boundary") {
+      await control("continueBoundary");
       return;
     }
     if (primaryAction === "continue") {

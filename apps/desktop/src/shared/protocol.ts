@@ -629,6 +629,9 @@ export interface DesktopApi {
   continueBatchTask(taskId: string): Promise<BatchTaskDetails>;
   continueBatchToLast(taskId: string): Promise<BatchTaskDetails>;
   confirmBatchScale(taskId: string): Promise<BatchTaskDetails>;
+  continueCaptureBoundary(
+    taskId: string
+  ): Promise<TaskDetails | BatchTaskDetails>;
   retryBatchTask(taskId: string, operationId?: string): Promise<BatchTaskDetails>;
   startDataProcessing(
     taskId: string,

@@ -330,6 +330,7 @@ export default function TaskCenterPanel({
       | "stop"
       | "continue"
       | "continueToLast"
+      | "continueBoundary"
       | "confirmScale"
       | "retry"
   ): Promise<void> {
@@ -367,6 +368,9 @@ export default function TaskCenterPanel({
         if (action === "continueToLast") {
           await window.pkulaw.continueSingleToLast(selectedTask.id);
         }
+        if (action === "continueBoundary") {
+          await window.pkulaw.continueCaptureBoundary(selectedTask.id);
+        }
         if (action === "retry") await window.pkulaw.retrySingleTask(selectedTask.id, operationId);
       } else {
         if (action === "start") await window.pkulaw.startBatchTask(selectedTask.id, operationId);
@@ -376,6 +380,9 @@ export default function TaskCenterPanel({
         if (action === "continue") await window.pkulaw.continueBatchTask(selectedTask.id);
         if (action === "continueToLast") {
           await window.pkulaw.continueBatchToLast(selectedTask.id);
+        }
+        if (action === "continueBoundary") {
+          await window.pkulaw.continueCaptureBoundary(selectedTask.id);
         }
         if (action === "confirmScale") {
           await window.pkulaw.confirmBatchScale(selectedTask.id);
@@ -704,6 +711,7 @@ export default function TaskCenterPanel({
                   {actionPolicy.continue && <button className="primary-button compact" type="button" disabled={busy || Boolean(browser?.captchaVisible)} onClick={() => void runTaskAction("continue")}>已处理，继续</button>}
                   {actionPolicy.continueToLast && <button className="primary-button compact" type="button" disabled={busy} onClick={() => void runTaskAction("continueToLast")}>继续到尾页</button>}
                   {actionPolicy.confirmScale && <button className="primary-button compact" type="button" disabled={busy} onClick={() => void runTaskAction("confirmScale")}>确认规模并继续</button>}
+                  {actionPolicy.continueCaptureBoundary && <button className="primary-button compact" type="button" disabled={busy} onClick={() => void runTaskAction("continueBoundary")}>继续完整补采</button>}
                   {actionPolicy.stop && <button className="secondary-button" type="button" disabled={busy} onClick={() => void runTaskAction("stop")}>停止</button>}
                   {actionPolicy.retry && <button className="secondary-button" type="button" disabled={busy || browserLeaseBlocked} onClick={() => void runTaskAction("retry")}>{retryActionLabel(selectedTask)}</button>}
                   <button className="secondary-button" type="button" onClick={() => void openOutput()}>打开输出目录</button>

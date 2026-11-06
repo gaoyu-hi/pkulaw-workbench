@@ -12,6 +12,7 @@ import type {
   BrowserHostState,
   TaskRecord
 } from "../src/shared/protocol";
+import { shouldAutoResumeManual } from "../src/shared/task-workspace";
 
 const task = {
   id: "task-1",
@@ -76,6 +77,22 @@ describe("manual recovery UI", () => {
     expect(third.stableSamples).toBe(3);
     expect(third.shouldResume).toBe(true);
     expect(third.phase).toBe("verifying");
+  });
+
+  it("never auto-resumes a capture boundary decision", () => {
+    expect(
+      shouldAutoResumeManual({
+        taskId: "task-1",
+        leaseTaskId: "task-1",
+        taskStatus: "waiting_manual",
+        errorCode: "CAPTURE_BOUNDARY_REACHED",
+        captchaVisible: false,
+        loginVisible: false,
+        authenticated: true,
+        selectorReady: true,
+        stableSamples: 3
+      })
+    ).toBe(false);
   });
 
   it("allows a preflight access wait after its temporary lease was released", () => {

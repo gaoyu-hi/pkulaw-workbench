@@ -81,7 +81,8 @@ export function TaskPrimaryActionBar({
   const actionable = [
     "continue",
     "resume-from-checkpoint",
-    "redetect"
+    "redetect",
+    "capture-boundary"
   ].includes(action);
   if (!actionable && !feedback) return null;
   return (
@@ -480,6 +481,8 @@ export function PauseReasonCard({
         ? "选择继续到尾页，或停止并保留分页断点。"
         : pause.kind === "scale"
           ? "确认批量规模后继续。"
+          : pause.kind === "boundary"
+            ? "已扫描结果已保留；确认后仅补采未完成范围。"
           : pause.kind === "candidate"
             ? "在候选列表中选择明确版本。"
             : pause.detail,

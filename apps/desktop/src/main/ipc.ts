@@ -307,6 +307,18 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
     return result as unknown as TaskDetails;
   });
   ipcMain.handle(
+    "tasks:continue-capture-boundary",
+    async (_event, taskId: unknown) => {
+      const result = await pythonService.request(
+        "task.continue-capture-boundary",
+        {
+          taskId: assertTaskId(taskId)
+        }
+      );
+      return result as unknown as TaskDetails | BatchTaskDetails;
+    }
+  );
+  ipcMain.handle(
     "tasks:resume-after-manual",
     async (_event, taskId: unknown, operationId: unknown) => {
       try {
@@ -650,6 +662,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
       "tasks:list",
       "tasks:get",
       "tasks:get-details",
+      "tasks:continue-capture-boundary",
       "tasks:resume-after-manual",
       "tasks:apply-settings",
       "tasks:archive",

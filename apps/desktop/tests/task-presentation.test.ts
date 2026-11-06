@@ -6,6 +6,7 @@ import type {
 import {
   buildTaskTimeline,
   collectionActions,
+  derivePrimaryTaskAction,
   downloadIntentView,
   explainError,
   hashState,
@@ -346,6 +347,36 @@ describe("task presentation", () => {
       }
     });
     expect(collectionActions(pageLimitTask).continueToLast).toBe(true);
+  });
+
+  it("routes collection boundary to its dedicated action", () => {
+    const boundaryTask = task({
+      status: "waiting_manual",
+      error: {
+        code: "CAPTURE_BOUNDARY_REACHED",
+        message: "platform boundary"
+      },
+      checkpoint: {
+        adaptiveSearch: {
+          fallbackMode: "A",
+          boundary: { completedPolicyCount: 3 }
+        }
+      }
+    });
+    expect(
+      derivePrimaryTaskAction(boundaryTask, { recovery: undefined })
+    ).toBe("capture-boundary");
+    expect(collectionActions(boundaryTask, { failedItems: 0 })).toMatchObject({
+      continue: false,
+      continueCaptureBoundary: true
+    });
+    expect(
+      pauseView(
+        "waiting_manual",
+        {},
+        { code: "CAPTURE_BOUNDARY_REACHED", message: "" }
+      )?.kind
+    ).toBe("boundary");
   });
 
   it("keeps pause, resume and stop buttons mutually sensible", () => {

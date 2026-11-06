@@ -328,6 +328,8 @@ export default function BatchCollectorPanel({
       ? "已处理，继续"
       : primaryAction === "redetect"
         ? "重新检测并继续"
+        : primaryAction === "capture-boundary"
+          ? "继续完整补采"
         : primaryAction === "resume-from-checkpoint"
           ? retryLabel
           : "";
@@ -504,6 +506,7 @@ export default function BatchCollectorPanel({
       | "stop"
       | "continue"
       | "continueToLast"
+      | "continueBoundary"
       | "confirmScale"
       | "retry"
   ): Promise<void> {
@@ -546,6 +549,13 @@ export default function BatchCollectorPanel({
       } else if (action === "confirmScale") {
         setDetails(await window.pkulaw.confirmBatchScale(selectedTaskId));
         setNotice("批量规模已确认，将仅在全部搜索完成后创建和下载批次。");
+      } else if (action === "continueBoundary") {
+        setDetails(
+          (await window.pkulaw.continueCaptureBoundary(
+            selectedTaskId
+          )) as BatchTaskDetails
+        );
+        setNotice("已确认完整补采，任务只处理尚未完成的年份和省份。");
       } else {
         if (browser?.captchaVisible) {
           try {
@@ -585,6 +595,10 @@ export default function BatchCollectorPanel({
         message: "正在重新检测浏览器状态。"
       });
       retryManualRecovery();
+      return;
+    }
+    if (primaryAction === "capture-boundary") {
+      await control("continueBoundary");
       return;
     }
     if (primaryAction === "continue") {

@@ -729,6 +729,8 @@ export function explainError(
       ? "人工选择继续到尾页，或停止并保留分页断点"
       : code === "BATCH_SCALE_CONFIRMATION_REQUIRED"
         ? "人工确认批量规模后继续，或停止任务"
+        : code === "CAPTURE_BOUNDARY_REACHED"
+          ? "已完成结果已保留；确认后仅补采未完成范围，或保留当前结果并结束"
         : ["waiting_login", "waiting_manual"].includes(status)
           ? "人工处理后可显式继续；继续前重新核验登录、页面和断点"
           : ["failed", "partial", "stopped"].includes(status)
@@ -758,6 +760,19 @@ export function explainError(
       hardStop: false,
       actionPolicy,
       allowedActions: ["确认规模并继续", "停止任务"]
+    };
+  }
+  if (code === "CAPTURE_BOUNDARY_REACHED") {
+    return {
+      title: "完整采集已达到平台边界",
+      stage,
+      reason: error.message,
+      recommendation:
+        "已扫描结果已保留；继续仅补采未完成年份/省份，或保留当前结果并结束。",
+      severity: "manual",
+      hardStop: false,
+      actionPolicy,
+      allowedActions: ["继续完整补采", "保留已完成结果并结束"]
     };
   }
   if (code === "LOGIN_REQUIRED" || status === "waiting_login") {
@@ -904,6 +919,7 @@ export interface PauseView {
     | "candidate"
     | "page-limit"
     | "scale"
+    | "boundary"
     | "quota"
     | "stopped";
   automatic: boolean;
@@ -955,6 +971,16 @@ export function pauseView(
       title: "自动暂停：批量规模需要确认",
       detail: "确认前不会创建或下载新的批次。",
       kind: "scale",
+      automatic: true
+    };
+  }
+  if (error?.code === "CAPTURE_BOUNDARY_REACHED") {
+    return {
+      title: "自动暂停：完整采集已达到平台边界",
+      detail:
+        reason ||
+        "已扫描结果已保留；确认后仅补采未完成范围，或保留当前结果并结束。",
+      kind: "boundary",
       automatic: true
     };
   }
@@ -1049,6 +1075,7 @@ export interface CollectionActions {
   continue: boolean;
   continueToLast: boolean;
   confirmScale: boolean;
+  continueCaptureBoundary: boolean;
   retry: boolean;
   reason: string;
 }
@@ -1098,6 +1125,7 @@ export function collectionActions(
       continue: false,
       continueToLast: false,
       confirmScale: false,
+      continueCaptureBoundary: false,
       retry: false,
       reason: task?.archivedAt ? "任务在回收站中" : "尚未选择任务"
     };
@@ -1106,6 +1134,7 @@ export function collectionActions(
   const hardStop = isHardStopCode(code);
   const pageLimit = code === "PAGE_LIMIT_REACHED";
   const scale = code === "BATCH_SCALE_CONFIRMATION_REQUIRED";
+  const captureBoundary = code === "CAPTURE_BOUNDARY_REACHED";
   const journal = asRecord(task.checkpoint.scanJournal);
   const scanIncomplete = Boolean(
     task.checkpoint.scanCompleted !== true &&
@@ -1128,6 +1157,8 @@ export function collectionActions(
   if (options.candidateWaiting) reason = "请先选择同名版本";
   if (pageLimit) reason = "请先确认继续到尾页或停止";
   if (scale) reason = "请先确认批量规模";
+  if (captureBoundary)
+    reason = "已扫描结果已保留；可继续补采未完成范围或保留当前结果";
   return {
     start: task.status === "pending",
     pause: ["running", "verifying"].includes(task.status),
@@ -1137,10 +1168,15 @@ export function collectionActions(
       ["waiting_login", "waiting_manual"].includes(task.status) &&
       !pageLimit &&
       !scale &&
+      !captureBoundary &&
       !options.candidateWaiting &&
       !hardStop,
     continueToLast: task.status === "waiting_manual" && pageLimit,
     confirmScale: task.status === "waiting_manual" && scale,
+    continueCaptureBoundary:
+      task.status === "waiting_manual" &&
+      captureBoundary &&
+      !hardStop,
     retry:
       ["failed", "partial", "stopped"].includes(task.status) &&
       (
@@ -1159,6 +1195,7 @@ export type TaskPrimaryAction =
   | "redetect"
   | "page-limit"
   | "scale"
+  | "capture-boundary"
   | "candidate"
   | "none";
 
@@ -1178,6 +1215,7 @@ export function derivePrimaryTaskAction(
   if (task.status === "waiting_manual") {
     if (code === "PAGE_LIMIT_REACHED") return "page-limit";
     if (code === "BATCH_SCALE_CONFIRMATION_REQUIRED") return "scale";
+    if (code === "CAPTURE_BOUNDARY_REACHED") return "capture-boundary";
     if (
       options.candidateWaiting ||
       code === "CANDIDATE_SELECTION_REQUIRED"
