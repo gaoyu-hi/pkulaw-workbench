@@ -11,9 +11,6 @@ from pkulaw_engine.browser_bridge import BrowserBridge
 from pkulaw_engine.capture_boundary import CaptureBoundaryRequired
 from pkulaw_engine.controls.task_control import TaskControl
 from pkulaw_engine.logging_utils import JsonLineLogger
-from pkulaw_engine.search_strategy_version import (
-    refresh_adaptive_progress_total,
-)
 from pkulaw_engine.selections.pagination import PageSelection
 from pkulaw_engine.selections.years import SearchCombination, YearSelection
 from pkulaw_engine.single_task import SingleTaskConfig, SingleTaskManager
@@ -353,42 +350,30 @@ class AdaptiveSingleTaskTests(unittest.TestCase):
     def test_adaptive_single_total_updates_after_missing_years_append(
         self,
     ) -> None:
-        combinations = [
-            SearchCombination(
-                query="碳中和",
-                library="central",
-                year=ALL_YEARS,
-                query_index=0,
-                library_index=0,
-                year_index=0,
-                combination_index=1,
-            ),
-            SearchCombination(
-                query="碳中和",
-                library="local",
-                year=ALL_YEARS,
-                query_index=0,
-                library_index=1,
-                year_index=0,
-                combination_index=2,
-            ),
-        ]
-        combinations.append(
-            SearchCombination(
-                query="碳中和",
-                library="central",
-                year="2023",
-                query_index=0,
-                library_index=0,
-                year_index=1,
-                combination_index=3,
-                action_kind="year-filter-switch",
-            )
+        adapter = FakeSingleAdapter(
+            year_entries=[
+                {"value": "2022", "count": 1},
+                {"value": "2023", "count": 2},
+                {"value": "2024", "count": 3},
+            ]
         )
-        self.assertGreater(
-            refresh_adaptive_progress_total(2, combinations),
-            2,
-        )
+        with mock.patch(
+            "pkulaw_engine.single_task.SearchActionGovernor",
+            return_value=SimpleNamespace(
+                before_result_action=lambda _kind: None,
+                after_result_action=lambda *a, **k: None,
+                note_captcha_cleared=lambda *a, **k: False,
+                snapshot=lambda: {
+                    "keyword_submissions": 0,
+                    "year_filter_switches": 0,
+                    "captcha_waits": 0,
+                    "released_to_boundary": False,
+                },
+            ),
+        ):
+            self._run_collect(adapter)
+        checkpoint = self.store.get_task(self.task_id)["checkpoint"]
+        self.assertGreater(int(checkpoint["combinationCount"]), 2)
 
     def test_single_v2_range_submits_keyword_once_per_sublibrary(self) -> None:
         adapter = FakeSingleAdapter(
