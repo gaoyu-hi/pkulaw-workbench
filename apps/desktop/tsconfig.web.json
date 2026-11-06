@@ -22,6 +22,7 @@
     "tests/data-presentation.test.ts",
     "tests/collector-panels.test.ts",
     "tests/collector-workflow.test.ts",
+    "tests/collector-reset.test.ts",
     "tests/browser-surface.test.ts",
     "tests/manual-recovery-ui.test.ts",
     "tests/overview-workspace.test.ts",

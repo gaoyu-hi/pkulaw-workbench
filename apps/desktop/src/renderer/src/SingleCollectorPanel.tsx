@@ -58,6 +58,10 @@ import { usePersistentState } from "./usePersistentState";
 import TaskWorkspaceFrame from "./TaskWorkspaceFrame";
 import { useManualRecovery } from "./useManualRecovery";
 import TaskSettingsPanel from "./TaskSettingsPanel";
+import {
+  resetSingleCollectorForm,
+  shouldResetCollector
+} from "./collector-reset";
 
 interface SingleCollectorPanelProps {
   appInfo: AppInfo | null;
@@ -153,6 +157,10 @@ export default function SingleCollectorPanel({
   const [pauseDetailOpen, setPauseDetailOpen] = useState(false);
   const startInFlightRef = useRef(false);
   const settingsInFlightRef = useRef(false);
+  const previousStatusByTaskRef = useRef<
+    Record<string, string | undefined>
+  >({});
+  const skipNextAutoSelectRef = useRef(false);
   const [notice, setNotice] = useState(
     "任务会使用当前内置浏览器，不保存账号密码，不绕过登录、滑块或机构额度。"
   );
@@ -276,9 +284,46 @@ export default function SingleCollectorPanel({
 
   useEffect(() => {
     if (!selectedTaskId && tasks[0]) {
+      if (skipNextAutoSelectRef.current) {
+        skipNextAutoSelectRef.current = false;
+        return;
+      }
       void loadDetails(tasks[0].id).catch(() => undefined);
     }
   }, [selectedTaskId, tasks]);
+
+  useEffect(() => {
+    if (!details) return;
+    const taskId = details.task.id;
+    const previousStatus = previousStatusByTaskRef.current[taskId];
+    const currentStatus = details.task.status;
+    previousStatusByTaskRef.current[taskId] = currentStatus;
+    if (!shouldResetCollector(previousStatus, currentStatus)) return;
+    skipNextAutoSelectRef.current = true;
+    resetSingleCollectorForm(
+      appInfo?.defaultSingleOutputDir || "",
+      {
+        setQueries,
+        setMatchMode,
+        setLibrary,
+        setYearSelection,
+        setProvince,
+        setTimeliness,
+        setPageSize,
+        setPageSelection,
+        setOutputDir
+      }
+    );
+    setSelectedTaskId("");
+    setDetails(null);
+    setSettingsOpen(false);
+    setPauseDetailOpen(false);
+    setNotice("任务已完成，可创建新的逐篇采集任务。");
+  }, [
+    details?.task.id,
+    details?.task.status,
+    appInfo?.defaultSingleOutputDir
+  ]);
 
   const {
     view: manualRecovery,
