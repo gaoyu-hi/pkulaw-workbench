@@ -1142,10 +1142,55 @@ async function runUnifiedWorkspaceSmoke(
     },
     outputDir: path.join(dataDirectory, "phase11-batch")
   });
+  const settingsTaskName = "阶段十一暂停设置面板验证";
+  const settingsTaskId = await createAndStartSingleTask(
+    service,
+    dataDirectory,
+    settingsTaskName,
+    {
+      queries: ["分页测试"],
+      matchMode: "keyword",
+      library: "central",
+      year: "全部年份",
+      province: "全部省份",
+      timeliness: "全部（仅记录元数据，不筛选）",
+      pageSize: 10,
+      maxPages: 3
+    }
+  );
+  await waitForTask(
+    service,
+    settingsTaskId,
+    (details) =>
+      ["preflight", "running", "verifying"].includes(details.task.status),
+    15_000
+  );
+  await service.request("single.pause", { taskId: settingsTaskId }, 15_000);
+  await waitForTask(
+    service,
+    settingsTaskId,
+    (details) => details.task.status === "paused",
+    15_000
+  );
   await navigate("逐篇采集");
   if (!(await waitForSelector(".task-workspace-frame"))) {
     throw new Error("统一逐篇工作区未渲染");
   }
+  const pausedTaskSelected = Boolean(
+    await window.webContents.executeJavaScript(
+      `(() => {
+        const button = [...document.querySelectorAll('.single-task-tabs button')]
+          .find(item => (item.textContent || '').includes(${JSON.stringify(settingsTaskName)}));
+        if (!button) return false;
+        button.click();
+        return true;
+      })()`
+    )
+  );
+  if (!pausedTaskSelected) {
+    throw new Error("暂停任务未出现在逐篇任务列表");
+  }
+  await wait(350);
   const layout = (await window.webContents.executeJavaScript(
     `(() => {
       const task = document.querySelector('.task-workspace-primary')?.getBoundingClientRect();
@@ -1237,7 +1282,7 @@ async function runUnifiedWorkspaceSmoke(
       const body = document.querySelector('.task-settings-panel .collector-form-body');
       const footer = document.querySelector('.task-settings-panel .collector-action-footer');
       const apply = [...document.querySelectorAll('.task-settings-actions button')]
-        .find(item => (item.textContent || '').trim() === '应用设置');
+        .find(item => (item.textContent || '').trim() === '保存修改');
       const yearRow = document.querySelector('.task-settings-panel .collector-year-row')
         ?.getBoundingClientRect();
       const librarySelect = [...document.querySelectorAll('.task-settings-panel select')]
@@ -1361,6 +1406,23 @@ async function runUnifiedWorkspaceSmoke(
   );
   if (!settingsClosed || browserRestored !== "true") {
     throw new Error("关闭任务设置后浏览器未恢复");
+  }
+  await service.request("single.stop", { taskId: settingsTaskId }, 15_000);
+  await waitForTask(
+    service,
+    settingsTaskId,
+    (details) => details.task.status === "stopped",
+    15_000
+  );
+  const settingsLeaseDeadline = Date.now() + 5_000;
+  while (
+    Date.now() < settingsLeaseDeadline &&
+    !browserHost.getState().browserLease.available
+  ) {
+    await wait(100);
+  }
+  if (!browserHost.getState().browserLease.available) {
+    throw new Error("暂停设置任务停止后浏览器租约未释放");
   }
 
   const beforeStartCount = ((
