@@ -34,6 +34,14 @@ from .progress import (
     single_scan_overall,
 )
 from .scan_journal import ScanJournal, ScanJournalError, config_fingerprint
+from .search_recovery import (
+    CheckpointedActionResultRunner,
+    SearchRecoveryBoundaryRequired,
+    SearchRecoveryUnconfirmed,
+    build_pending_search_action,
+    observe_adapter_action,
+    restore_governor_state,
+)
 from .search_governor import SearchActionGovernor, SearchActionKind
 from .search_strategy_version import (
     parse_search_strategy_version,
@@ -1023,8 +1031,15 @@ class SingleTaskManager:
             PageSizeNotApplied,
             ResultGroupingUnavailable,
             ScanJournalError,
+            SearchRecoveryUnconfirmed,
         ) as exc:
-            status = "waiting_login" if isinstance(exc, LoginRequired) else "stopped"
+            status = (
+                "waiting_login"
+                if isinstance(exc, LoginRequired)
+                else "waiting_manual"
+                if isinstance(exc, SearchRecoveryUnconfirmed)
+                else "stopped"
+            )
             checkpoint = dict((store.get_task(task_id) or {}).get("checkpoint") or {})
             safety_snapshot = self._progress_snapshot_for_items(
                 store,
@@ -1215,6 +1230,13 @@ class SingleTaskManager:
             )
         total_planned = max(1, len(combinations))
         governor = SearchActionGovernor() if adaptive_mode else None
+        if governor is not None:
+            governor = restore_governor_state(
+                governor,
+                dict(
+                    initial_checkpoint.get("searchRecovery") or {}
+                ).get("governor"),
+            )
         adaptive_scope_states: dict[
             tuple[str, str],
             dict[str, Any],
@@ -2633,6 +2655,7 @@ class SingleTaskManager:
             "captchaWaits": int(
                 snapshot.get("captcha_waits") or 0
             ),
+            "governorState": snapshot,
             "completedYears": sorted(completed_years),
             "missingYears": sorted(missing_years),
             "fallbackMode": "A" if boundary else "C",
@@ -2741,7 +2764,15 @@ class SingleTaskManager:
             combination.library
         )
         timeliness = combination.timeliness or config.timeliness
-        last_error: Exception | None = None
+        request = SearchRequestIdentity(
+            query=combination.query,
+            match_mode=config.match_mode,
+            library=combination.library,
+            year=combination.year,
+            province=province,
+            timeliness=timeliness,
+            requested_page_size=config.page_size,
+        )
 
         def can_reuse_session_for_year() -> bool:
             request = adapter.current_search_request
@@ -2757,116 +2788,120 @@ class SingleTaskManager:
                 and request.requested_page_size == config.page_size
             )
 
-        for _attempt in range(3):
+        effective_kind: SearchActionKind = (
+            "year-filter-switch"
+            if (
+                requested_kind == "year-filter-switch"
+                and can_reuse_session_for_year()
+            )
+            else "keyword-submission"
+        )
+        previous_signature = (
+            adapter.current_search_session.result_signature
+            if adapter.current_search_session is not None
+            else ""
+        )
+        action = build_pending_search_action(
+            task_id=task_id,
+            kind=effective_kind,
+            request=request,
+            expected_page=1,
+            previous_result_signature=previous_signature,
+            target={
+                "year": combination.year,
+                "partitionKey": combination.partition_key,
+            },
+        )
+
+        def execute() -> dict[str, Any]:
             self._safe_boundary(
                 store,
                 controller,
                 task_id,
                 current_action="search",
             )
-            reuse_year_filter = (
-                requested_kind == "year-filter-switch"
+            if (
+                effective_kind == "year-filter-switch"
                 and can_reuse_session_for_year()
+            ):
+                return adapter.select_year(year=combination.year)
+            return adapter.search(
+                keyword=combination.query,
+                match_mode=config.match_mode,
+                library=combination.library,
+                year=combination.year,
+                province=province,
+                timeliness=timeliness,
+                page_size=config.page_size,
             )
-            effective_kind: SearchActionKind = (
-                "year-filter-switch"
-                if reuse_year_filter
-                else "keyword-submission"
-            )
-            governor.before_result_action(effective_kind)
-            try:
-                if reuse_year_filter:
-                    state = adapter.select_year(year=combination.year)
-                else:
-                    state = adapter.search(
-                        keyword=combination.query,
-                        match_mode=config.match_mode,
-                        library=combination.library,
-                        year=combination.year,
-                        province=province,
-                        timeliness=timeliness,
-                        page_size=config.page_size,
-                    )
-                governor.after_result_action()
-                return state
-            except (ManualActionRequired, LoginRequired) as exc:
-                last_error = exc
-                captcha_detected = (
-                    isinstance(exc, ManualActionRequired)
-                    and (
-                        "验证码" in str(exc)
-                        or "滑块" in str(exc)
-                        or "captcha" in str(exc).lower()
-                    )
-                )
-                self._wait_for_manual(
-                    store,
-                    controller,
-                    task_id,
-                    str(exc),
-                    "waiting_login"
-                    if isinstance(exc, LoginRequired)
-                    else "waiting_manual",
-                )
-                if captcha_detected:
-                    released = governor.note_captcha_cleared()
-                    if released:
-                        boundary = CaptureBoundary(
-                            reason="重复验证码，进入采集边界确认",
-                            query=combination.query,
-                            library=combination.library,
-                            year=combination.year,
-                            province=province,
-                            completed_policy_count=(
-                                completed_policy_count
-                            ),
-                            remaining_scopes=(
-                                {
-                                    "query": combination.query,
-                                    "library": combination.library,
-                                    "year": combination.year,
-                                    "province": province,
-                                },
-                            ),
-                            estimated_result_operations=1,
-                            detected_at=time.strftime(
-                                "%Y-%m-%dT%H:%M:%SZ",
-                                time.gmtime(),
-                            ),
-                        )
-                        adaptive_search = (
-                            self._build_adaptive_search_checkpoint(
-                                config=config,
-                                governor=governor,
-                                adaptive_scope_states=(
-                                    adaptive_scope_states
-                                ),
-                                boundary=boundary.to_checkpoint(),
-                            )
-                        )
-                        raise CaptureBoundaryRequired(
-                            boundary,
-                            adaptive_search=adaptive_search,
-                        )
-                request = adapter.current_search_request
-                session = adapter.current_search_session
-                if request is not None and session is not None:
-                    try:
-                        current = adapter.read_results()
-                        if session.matches_request(
-                            request,
-                            expected_page=session.page,
-                            require_refinements=True,
-                        ):
-                            governor.after_result_action()
-                            return current
-                    except Exception:
-                        pass
-                continue
 
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError("adaptive result action exhausted retries")
+        def wait_for_manual(
+            reason: str,
+            status: str,
+            event_id: str,
+            pending_action: Any,
+        ) -> bool:
+            del pending_action
+            self._wait_for_manual(
+                store,
+                controller,
+                task_id,
+                reason,
+                status,
+                recovery_event_id=event_id,
+            )
+            return True
+
+        try:
+            return CheckpointedActionResultRunner(
+                store,
+                task_id,
+                governor,
+            ).run(
+                action,
+                execute=execute,
+                observe=lambda: observe_adapter_action(
+                    adapter,
+                    action,
+                ),
+                wait_for_manual=wait_for_manual,
+            )
+        except SearchRecoveryBoundaryRequired as exc:
+            boundary = CaptureBoundary(
+                reason=(
+                    "重复验证码，进入采集边界确认："
+                    f"{exc.reason}"
+                ),
+                query=combination.query,
+                library=combination.library,
+                year=combination.year,
+                province=province,
+                completed_policy_count=completed_policy_count,
+                remaining_scopes=(
+                    {
+                        "query": combination.query,
+                        "library": combination.library,
+                        "year": combination.year,
+                        "province": province,
+                        "partitionKey": combination.partition_key,
+                    },
+                ),
+                estimated_result_operations=1,
+                detected_at=time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ",
+                    time.gmtime(),
+                )
+            )
+            adaptive_search = self._build_adaptive_search_checkpoint(
+                config=config,
+                governor=governor,
+                adaptive_scope_states=adaptive_scope_states,
+                boundary=boundary.to_checkpoint(),
+            )
+            raise CaptureBoundaryRequired(
+                boundary,
+                adaptive_search=adaptive_search,
+            ) from exc
 
     def _require_search_state(
         self,
@@ -4170,6 +4205,7 @@ class SingleTaskManager:
         task_id: str,
         message: str,
         status: str,
+        recovery_event_id: str = "",
     ) -> None:
         current = store.get_task(task_id) or {}
         checkpoint = dict(current.get("checkpoint") or {})
@@ -4179,6 +4215,13 @@ class SingleTaskManager:
                 "pauseReason": message,
                 "manualStatus": status,
                 "manualAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "manualRecovery": {
+                    "requestedEventId": recovery_event_id,
+                    "requestedAt": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ",
+                        time.gmtime(),
+                    ),
+                },
             }
         )
         snapshot = self._progress_snapshot_for_items(
@@ -4205,7 +4248,21 @@ class SingleTaskManager:
             "single.manual-required",
             {"taskId": task_id, "status": status, "message": message},
         )
-        controller.manual_wait()
+        while True:
+            controller.manual_wait()
+            latest = store.get_task(task_id) or {}
+            accepted = str(
+                dict(latest.get("checkpoint") or {})
+                .get("manualRecovery", {})
+                .get("acceptedEventId")
+                or ""
+            )
+            if (
+                not recovery_event_id
+                or not accepted
+                or accepted == recovery_event_id
+            ):
+                break
         resumed_checkpoint = checkpoint_after_manual_continue(
             checkpoint,
             time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
