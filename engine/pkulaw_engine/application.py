@@ -1715,6 +1715,19 @@ class EngineApplication:
                     },
                 )
             self.store.clear_task_results(task_id)
+            cleaned_checkpoint = dict(
+                (self.store.get_task(task_id) or {}).get("checkpoint")
+                or {}
+            )
+            for completion_key in (
+                "completedFiles",
+                "completedBatches",
+            ):
+                cleaned_checkpoint.pop(completion_key, None)
+            self.store.update_task(
+                task_id,
+                checkpoint=cleaned_checkpoint,
+            )
 
         task = self.store.get_task(task_id)
         if task is None:

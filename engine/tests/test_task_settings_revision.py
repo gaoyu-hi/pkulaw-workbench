@@ -616,7 +616,15 @@ class ArtifactAwareSettingsApplicationTests(unittest.TestCase):
 
     def test_commit_delete_removes_results_then_starts_same_task(self) -> None:
         output = self.root / "output"
-        task = self._task(status="paused", output_dir=output)
+        task = self._task(
+            status="paused",
+            output_dir=output,
+            checkpoint={
+                "configGeneration": 1,
+                "completedFiles": [str(output / "old.docx")],
+                "completedBatches": ["batch-old"],
+            },
+        )
         task_id = str(task["id"])
         file = self._completed_file(task_id, output, "old.docx")
         preview = self._prepare(task_id, str(output))
@@ -638,6 +646,8 @@ class ArtifactAwareSettingsApplicationTests(unittest.TestCase):
         self.assertEqual(current["id"], task_id)
         self.assertEqual(current["input"]["queries"], ["碳中和"])
         self.assertFalse(file.exists())
+        self.assertNotIn("completedFiles", current["checkpoint"])
+        self.assertNotIn("completedBatches", current["checkpoint"])
         self.assertEqual(self.store.list_task_items(task_id), [])
         self.assertEqual(self.store.list_task_artifacts("proc-1"), [])
         start.assert_called_once()
