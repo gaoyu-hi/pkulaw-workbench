@@ -1637,6 +1637,98 @@ class PkulawAdapterOperationTests(unittest.TestCase):
                 )
         clear.assert_called_once()
 
+    def test_select_year_reuses_active_session_without_form_submit(self) -> None:
+        request = self._request(year="全部年份")
+        session = self._session(request)
+        self.adapter.current_search_request = request
+        self.adapter.current_search_session = session
+        self.adapter.search_url = session.url
+        target_year = "2022"
+        refined_session = replace(
+            session,
+            year=target_year,
+            actual_year=target_year,
+            page=1,
+        )
+        refined_state = {
+            "page": 1,
+            "totalPages": 1,
+            "rows": [],
+            "url": "https://example.test/search?year=2022",
+            "searchSession": refined_session.to_dict(),
+        }
+
+        with (
+            patch.object(self.adapter, "_ensure_operation_ready"),
+            patch.object(
+                self.adapter,
+                "read_results",
+                return_value={"page": 1, "totalPages": 1, "rows": []},
+            ),
+            patch.object(self.adapter, "_submit_search") as submit,
+            patch.object(self.adapter, "_ensure_library") as ensure_library,
+            patch.object(self.adapter, "_ensure_search_page") as ensure_page,
+            patch.object(
+                self.adapter,
+                "_run_refinement",
+                return_value=(
+                    refined_session,
+                    refined_state,
+                    {"ok": True, "changed": True},
+                ),
+            ) as run_refinement,
+        ):
+            result = self.adapter.select_year(year=target_year)
+
+        self.assertEqual(result["page"], 1)
+        self.assertEqual(result["searchSession"]["query"], request.query)
+        self.assertEqual(result["searchSession"]["year"], target_year)
+        self.assertEqual(self.adapter.current_search_request.year, target_year)
+        self.assertEqual(self.adapter.search_url, refined_session.url)
+        submit.assert_not_called()
+        ensure_library.assert_not_called()
+        ensure_page.assert_not_called()
+        call_kwargs = run_refinement.call_args.kwargs
+        self.assertEqual(call_kwargs["request"].year, target_year)
+        self.assertEqual(call_kwargs["required_filter_keys"], ("year",))
+        self.assertTrue(call_kwargs["require_ungrouped"])
+        self.assertTrue(call_kwargs["require_page_size"])
+
+    def test_select_year_rejects_without_active_session(self) -> None:
+        self.adapter.current_search_request = None
+        self.adapter.current_search_session = None
+        with self.assertRaises(YearFilterUnavailable):
+            self.adapter.select_year(year="2022")
+
+    def test_select_year_rejects_changed_library(self) -> None:
+        request = self._request(library="central")
+        session = replace(self._session(request), library="local")
+        self.adapter.current_search_request = request
+        self.adapter.current_search_session = session
+        with self.assertRaises(YearFilterUnavailable):
+            self.adapter.select_year(year="2022")
+
+    def test_select_year_rejects_unavailable_year(self) -> None:
+        request = self._request(year="全部年份")
+        session = self._session(request)
+        self.adapter.current_search_request = request
+        self.adapter.current_search_session = session
+        with (
+            patch.object(self.adapter, "_ensure_operation_ready"),
+            patch.object(
+                self.adapter,
+                "read_results",
+                return_value={"page": 1, "totalPages": 1, "rows": []},
+            ),
+            patch.object(
+                self.adapter,
+                "_apply_filter_action",
+                side_effect=YearFilterUnavailable("2022 不存在"),
+            ),
+        ):
+            with self.assertRaises(YearFilterUnavailable):
+                self.adapter.select_year(year="2022")
+
 
 if __name__ == "__main__":
     unittest.main()

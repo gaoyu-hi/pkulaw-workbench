@@ -404,6 +404,50 @@ class PkulawAdapter:
         self.search_url = str(session.url or state.get("url") or "")
         return state
 
+    def select_year(self, *, year: str) -> dict[str, Any]:
+        request = self.current_search_request
+        session = self.current_search_session
+        if request is None or session is None:
+            raise YearFilterUnavailable(
+                f"当前没有可复用的检索会话，无法切换公布年份：{year}"
+            )
+        if (
+            session.query != request.query
+            or session.library != request.library
+            or session.match_mode != request.match_mode
+        ):
+            raise YearFilterUnavailable(
+                "当前检索会话与目标年份筛选不兼容"
+            )
+        target_request = SearchRequestIdentity(
+            query=request.query,
+            match_mode=request.match_mode,
+            library=request.library,
+            year=year,
+            province=request.province,
+            timeliness=request.timeliness,
+            requested_page_size=request.requested_page_size,
+        )
+        state = self.read_results()
+        session = self.current_search_session or session
+        session, state, _ = self._run_refinement(
+            request=target_request,
+            session=session,
+            state=state,
+            action=lambda: self._apply_filter_action("year", year),
+            required_filter_keys=("year",),
+            require_page_size=True,
+            require_ungrouped=True,
+        )
+        self.current_search_request = target_request
+        self.current_search_session = session
+        self.search_url = str(session.url or state.get("url") or "")
+        if int(state.get("page") or 0) != 1:
+            raise YearFilterUnavailable(
+                f"公布年份切换后未回到第 1 页：{state.get('page')}"
+            )
+        return state
+
     def read_results(self) -> dict[str, Any]:
         self._ensure_operation_ready("read-results")
         with self.bridge.transaction() as tab:
