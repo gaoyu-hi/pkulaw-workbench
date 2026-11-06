@@ -2,6 +2,7 @@ import { createElement } from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SingleCollectorPanel from "../src/renderer/src/SingleCollectorPanel";
+import TaskSettingsRevisionDialog from "../src/renderer/src/TaskSettingsRevisionDialog";
 import type { TaskSettingsRevisionPreview } from "../src/shared/protocol";
 
 const preview: TaskSettingsRevisionPreview = {
@@ -12,12 +13,22 @@ const preview: TaskSettingsRevisionPreview = {
     completedPolicyCount: 3,
     completedBatchCount: 0,
     registeredFileCount: 3,
-    eligibleFileCount: 3,
-    protectedFileCount: 0,
+    eligibleFileCount: 2,
+    protectedFileCount: 1,
     directoryCount: 1,
     estimatedFreedBytes: 4096
   },
-  protectedFiles: []
+  protectedFiles: [
+    {
+      path: "D:/输出/共享政策.docx",
+      rawPath: "D:/输出/共享政策.docx",
+      reason: "SHARED_WITH_OTHER_TASK",
+      taskIds: ["task-1", "task-2"],
+      sources: ["downloaded"],
+      exists: true,
+      canTrash: false
+    }
+  ]
 };
 
 const browser = {
@@ -187,34 +198,40 @@ describe("SingleCollectorPanel settings commit", () => {
     });
     expect(pkulaw.prepareTaskSettingsRevision).toHaveBeenCalledTimes(1);
 
-    const deleteButton = buttonByText(active, "永久删除旧结果并重新扫描");
-    expect(deleteButton).toBeDefined();
-    await act(async () => {
-      (deleteButton?.props.onClick as () => void)?.();
-      await Promise.resolve();
-    });
+    const dialog = active.root.findByType(TaskSettingsRevisionDialog);
+    expect(dialog).toBeDefined();
+    expect(
+      JSON.stringify(dialog.props.preview.protectedFiles)
+    ).toContain("D:/输出/共享政策.docx");
+    expect(
+      JSON.stringify(dialog.props.preview.protectedFiles)
+    ).toContain("SHARED_WITH_OTHER_TASK");
 
-    const confirmButton = buttonByText(
-      active,
-      "确认永久删除并重新扫描"
-    );
-    expect(confirmButton).toBeDefined();
+    const deleteButton = buttonByText(active, "永久删除旧结果并重新扫描");
+    expect(deleteButton?.props.disabled).toBe(true);
+
     await act(async () => {
-      (confirmButton?.props.onClick as () => void)?.();
-      await Promise.resolve();
-      await Promise.resolve();
+      await (dialog.props.onCommit as (policy: string) => Promise<void>)(
+        "delete"
+      );
     });
 
     expect(pkulaw.commitTaskSettingsRevision).toHaveBeenCalledTimes(1);
+    const rejectedDialog = active.root.findByType(TaskSettingsRevisionDialog);
+    expect(rejectedDialog).toBeDefined();
+    expect(String(rejectedDialog.props.error)).toContain(
+      "TASK_OUTPUT_DELETE_BLOCKED"
+    );
     expect(
-      JSON.stringify(
-        renderer?.toJSON() ?? ""
-      )
-    ).toContain("TASK_OUTPUT_DELETE_BLOCKED");
-    expect(renderer?.root.findAllByType("section").length).toBeGreaterThan(0);
+      JSON.stringify(rejectedDialog.props.preview.protectedFiles)
+    ).toContain("D:/输出/共享政策.docx");
+    expect(
+      JSON.stringify(rejectedDialog.props.preview.protectedFiles)
+    ).toContain("SHARED_WITH_OTHER_TASK");
 
     await act(async () => {
-      renderer?.unmount();
+      rejectedDialog.props.onCancel();
     });
+    expect(active.root.findAllByType(TaskSettingsRevisionDialog)).toHaveLength(0);
   });
 });
