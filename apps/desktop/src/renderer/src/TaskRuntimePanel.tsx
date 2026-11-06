@@ -4,6 +4,7 @@ import type {
   ProgressSnapshot,
   ProtocolError,
   ProcessingRunRecord,
+  TaskCapabilities,
   TaskRecord,
   TaskTimelineEvent
 } from "../../shared/protocol";
@@ -21,6 +22,7 @@ import {
   progressSnapshotView,
   searchSessionView,
   stageLabel,
+  terminalActions,
   TASK_STATUS_LABELS,
   taskFailureView,
   type TaskFailureView,
@@ -822,7 +824,9 @@ export function TaskRuntimePanel({
   actionBusy = false,
   actionFeedback = null,
   onPrimaryAction,
-  onPauseDetailOpenChange
+  onPauseDetailOpenChange,
+  capabilities,
+  onCreateFreshTask
 }: {
   task: TaskRecord;
   completed?: number;
@@ -838,6 +842,8 @@ export function TaskRuntimePanel({
   actionFeedback?: TaskActionFeedback | null;
   onPrimaryAction?: () => void;
   onPauseDetailOpenChange?: (open: boolean) => void;
+  capabilities?: TaskCapabilities;
+  onCreateFreshTask?: () => void;
 }): React.JSX.Element {
   const [detailOpen, setDetailOpen] = useState(false);
   const failure = taskFailureView(task);
@@ -891,6 +897,30 @@ export function TaskRuntimePanel({
           failure={failure}
           onOpen={() => setDetailOpen(true)}
         />
+      )}
+      {capabilities && terminalActions({
+        task,
+        capabilities
+      }).length > 0 && (
+        <section className="task-primary-action-bar terminal-task-actions">
+          <button
+            type="button"
+            className="secondary-button compact"
+            onClick={() => setDetailOpen(true)}
+          >
+            查看停止原因
+          </button>
+          {onCreateFreshTask && capabilities.canCreateFreshTask && (
+            <button
+              type="button"
+              className="primary-button compact"
+              disabled={actionBusy}
+              onClick={onCreateFreshTask}
+            >
+              新建任务
+            </button>
+          )}
+        </section>
       )}
       <div className="task-runtime-scroll">
         <SearchContextCard task={task} />

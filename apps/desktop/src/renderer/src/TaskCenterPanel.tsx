@@ -299,10 +299,14 @@ export default function TaskCenterPanel({
     selectedTask?.id || ""
   );
   const failedItems = items.filter((item) => item.status === "failed").length;
-  const actionPolicy = collectionActions(selectedTask, {
-    candidateWaiting,
-    failedItems
-  });
+  const actionPolicy = collectionActions(
+    selectedTask,
+    details?.capabilities,
+    {
+      candidateWaiting,
+      failedItems
+    }
+  );
   const selectedProgress =
     selectedTask === null
       ? null
@@ -773,6 +777,7 @@ export default function TaskCenterPanel({
                 </div>
                 <TaskRuntimePanel
                   task={selectedTask}
+                  capabilities={details?.capabilities}
                   completed={
                     selectedTask.mode === "batch"
                       ? batches.filter((batch) => batch.status === "completed").length

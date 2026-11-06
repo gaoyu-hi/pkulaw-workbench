@@ -72,6 +72,7 @@ import TaskSettingsRevisionDialog, {
 } from "./TaskSettingsRevisionDialog";
 import {
   canOpenTaskSettings,
+  prefillBatchCollectorForm,
   resetBatchCollectorForm,
   useCollectorAutoLoad
 } from "./collector-reset";
@@ -365,12 +366,17 @@ export default function BatchCollectorPanel({
     details?.task.status === "waiting_manual" &&
     details.task.error?.code === "BATCH_SCALE_CONFIRMATION_REQUIRED";
   const browserLeaseBlocked = leaseBlocksNewBrowserTask(browser);
-  const actionPolicy = collectionActions(details?.task || null, {
-    failedItems: failedBatches
-  });
+  const actionPolicy = collectionActions(
+    details?.task || null,
+    details?.capabilities,
+    {
+      failedItems: failedBatches
+    }
+  );
   const retryLabel = retryActionLabel(details?.task || null);
   const primaryAction = derivePrimaryTaskAction(
     details?.task || null,
+    details?.capabilities,
     {
       recovery: manualRecovery,
       failedItems: failedBatches
@@ -723,6 +729,63 @@ export default function BatchCollectorPanel({
     }
   }
 
+  async function createFreshTask(): Promise<void> {
+    if (
+      !details ||
+      !details.capabilities.canCreateFreshTask ||
+      taskActionInFlightRef.current
+    ) {
+      return;
+    }
+    taskActionInFlightRef.current = true;
+    setBusy(true);
+    const oldTaskId = details.task.id;
+    try {
+      const seed = await window.pkulaw.prepareFreshTask(
+        oldTaskId,
+        newOperationId()
+      );
+      prefillBatchCollectorForm(seed, {
+        setQueries,
+        setMatchMode,
+        setLibrary,
+        setYearSelection,
+        setProvince,
+        setTimeliness,
+        setPageSize,
+        setPageSelection,
+        setCatalogFormat,
+        setOutputDir
+      });
+      autoLoad.holdFreshWorkspace(oldTaskId);
+      setSelectedTaskId("");
+      setDetails(null);
+      setSettingsOpen(false);
+      setSettingsRevision(null);
+      setSettingsCommitError(null);
+      setPauseDetailOpen(false);
+      setActionFeedback(null);
+      setNotice(
+        [
+          "已打开新建批量任务表单；旧任务仍保留在任务中心。",
+          seed.mayDuplicateDownloads
+            ? "旧任务已有下载成果，新任务不会跨任务跳过同名政策。"
+            : "",
+          seed.leaseHeld
+            ? "内置浏览器仍由其他任务占用，释放后才能启动新任务。"
+            : ""
+        ]
+          .filter(Boolean)
+          .join(" ")
+      );
+    } catch (error) {
+      setNotice(`打开新建批量任务失败：${String(error)}`);
+    } finally {
+      taskActionInFlightRef.current = false;
+      setBusy(false);
+    }
+  }
+
   const settingsPanel = (
     <aside className="batch-form-card collector-form-shell">
       <div className="collector-form-body">
@@ -972,12 +1035,14 @@ export default function BatchCollectorPanel({
               )}
               <TaskRuntimePanel
                 task={details.task}
+                capabilities={details.capabilities}
                 completed={completedBatches}
                 total={details.batches.length}
                 browserCaptchaVisible={Boolean(browser?.captchaVisible)}
                 browserCaptchaCheckedAt={browser?.captchaCheckedAt}
                 browserCaptchaSelector={browser?.captchaSelector}
                 alerts={runtimeAlerts}
+                onCreateFreshTask={() => void createFreshTask()}
                 primaryAction={primaryAction}
                 primaryActionLabel={primaryActionLabel}
                 actionBusy={busy}

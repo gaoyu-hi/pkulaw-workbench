@@ -1,6 +1,7 @@
 import type {
   ProgressSnapshot,
   ProtocolError,
+  TaskCapabilities,
   TaskRecord,
   TaskStatus,
   TaskTimelineEvent
@@ -1077,6 +1078,7 @@ export interface CollectionActions {
   confirmScale: boolean;
   continueCaptureBoundary: boolean;
   retry: boolean;
+  createFreshTask: boolean;
   reason: string;
 }
 
@@ -1117,11 +1119,28 @@ export function secondaryStopLabel(task: TaskRecord | null): string {
 
 export function collectionActions(
   task: TaskRecord | null,
-  options: {
+  capabilitiesOrOptions:
+    | TaskCapabilities
+    | {
+        candidateWaiting?: boolean;
+        failedItems?: number;
+      } = {},
+  maybeOptions: {
     candidateWaiting?: boolean;
     failedItems?: number;
   } = {}
 ): CollectionActions {
+  const capabilities = isTaskCapabilities(capabilitiesOrOptions)
+    ? capabilitiesOrOptions
+    : null;
+  const options = (
+    capabilities
+      ? maybeOptions
+      : capabilitiesOrOptions
+  ) as {
+    candidateWaiting?: boolean;
+    failedItems?: number;
+  };
   if (!task || task.archivedAt) {
     return {
       start: false,
@@ -1133,6 +1152,7 @@ export function collectionActions(
       confirmScale: false,
       continueCaptureBoundary: false,
       retry: false,
+      createFreshTask: false,
       reason: task?.archivedAt ? "任务在回收站中" : "尚未选择任务"
     };
   }
@@ -1165,32 +1185,51 @@ export function collectionActions(
   if (scale) reason = "请先确认批量规模";
   if (captureBoundary)
     reason = "已扫描结果已保留；可继续补采未完成范围或保留当前结果";
+  if (
+    capabilities?.resumeBlockReason &&
+    ["stopped", "failed", "partial"].includes(task.status)
+  ) {
+    reason = capabilities.resumeBlockReason;
+  }
   return {
     start: task.status === "pending",
     pause: ["running", "verifying"].includes(task.status),
-    resume: task.status === "paused" && !hardStop,
+    resume:
+      task.status === "paused" &&
+      !hardStop &&
+      (capabilities?.canResumeFromCheckpoint ?? true),
     stop: active && task.status !== "stopping",
-    continue:
-      ["waiting_login", "waiting_manual"].includes(task.status) &&
-      !pageLimit &&
-      !scale &&
-      !captureBoundary &&
-      !options.candidateWaiting &&
-      !hardStop,
+    continue: capabilities
+      ? capabilities.canContinueManual &&
+        !pageLimit &&
+        !scale &&
+        !captureBoundary &&
+        !options.candidateWaiting &&
+        !hardStop
+      : ["waiting_login", "waiting_manual"].includes(task.status) &&
+        !pageLimit &&
+        !scale &&
+        !captureBoundary &&
+        !options.candidateWaiting &&
+        !hardStop,
     continueToLast: task.status === "waiting_manual" && pageLimit,
     confirmScale: task.status === "waiting_manual" && scale,
     continueCaptureBoundary:
       task.status === "waiting_manual" &&
       captureBoundary &&
       !hardStop,
-    retry:
-      ["failed", "partial", "stopped"].includes(task.status) &&
-      (
-        options.failedItems === undefined ||
-        options.failedItems > 0 ||
-        scanIncomplete ||
-        task.status === "stopped"
-      ),
+    retry: capabilities
+      ? ["failed", "partial", "stopped"].includes(task.status) &&
+        capabilities.canResumeFromCheckpoint
+      : ["failed", "partial", "stopped"].includes(task.status) &&
+        (
+          options.failedItems === undefined ||
+          options.failedItems > 0 ||
+          scanIncomplete ||
+          task.status === "stopped"
+        ),
+    createFreshTask:
+      capabilities?.canCreateFreshTask ?? false,
     reason
   };
 }
@@ -1207,12 +1246,31 @@ export type TaskPrimaryAction =
 
 export function derivePrimaryTaskAction(
   task: TaskRecord | null,
-  options: {
+  capabilitiesOrOptions:
+    | TaskCapabilities
+    | {
+        recovery?: ManualRecoveryView;
+        candidateWaiting?: boolean;
+        failedItems?: number;
+      } = {},
+  maybeOptions: {
     recovery?: ManualRecoveryView;
     candidateWaiting?: boolean;
     failedItems?: number;
   } = {}
 ): TaskPrimaryAction {
+  const capabilities = isTaskCapabilities(capabilitiesOrOptions)
+    ? capabilitiesOrOptions
+    : null;
+  const options = (
+    capabilities
+      ? maybeOptions
+      : capabilitiesOrOptions
+  ) as {
+    recovery?: ManualRecoveryView;
+    candidateWaiting?: boolean;
+    failedItems?: number;
+  };
   if (!task || task.archivedAt) return "none";
   const code = String(task.error?.code || "");
   if (["YEAR_FILTER_UNAVAILABLE", "YEAR_RANGE_UNAVAILABLE"].includes(code)) {
@@ -1249,7 +1307,9 @@ export function derivePrimaryTaskAction(
     ["waiting_manual", "waiting_login"].includes(task.status) &&
     !isHardStopCode(code)
   ) {
-    return "continue";
+    return capabilities && !capabilities.canContinueManual
+      ? "none"
+      : "continue";
   }
   const journal = asRecord(task.checkpoint.scanJournal);
   const scanIncomplete = Boolean(
@@ -1257,16 +1317,72 @@ export function derivePrimaryTaskAction(
       (Object.keys(journal).length > 0 ||
         Number(task.checkpoint.currentPage || 0) > 0)
   );
-  if (
-    ["stopped", "partial", "failed"].includes(task.status) &&
-    (
-      scanIncomplete ||
-      Number(options.failedItems || 0) > 0
-    )
-  ) {
-    return "resume-from-checkpoint";
+  if (["stopped", "partial", "failed"].includes(task.status)) {
+    if (
+      capabilities
+        ? capabilities.canResumeFromCheckpoint
+        : (
+            scanIncomplete ||
+            Number(options.failedItems || 0) > 0
+          )
+    ) {
+      return "resume-from-checkpoint";
+    }
   }
   return "none";
+}
+
+export type TerminalTaskActionKind =
+  | "view-stop-reason"
+  | "fresh-task";
+
+export interface TerminalTaskAction {
+  kind: TerminalTaskActionKind;
+  label: string;
+  enabled: boolean;
+}
+
+export function terminalActions(
+  details: {
+    task: TaskRecord;
+    capabilities: TaskCapabilities;
+  }
+): TerminalTaskAction[] {
+  if (
+    !["stopped", "failed", "partial", "completed"].includes(
+      details.task.status
+    )
+  ) {
+    return [];
+  }
+  return [
+    {
+      kind: "view-stop-reason",
+      label: "查看停止原因",
+      enabled: true
+    },
+    {
+      kind: "fresh-task",
+      label: "新建任务",
+      enabled: details.capabilities.canCreateFreshTask
+    }
+  ];
+}
+
+function isTaskCapabilities(
+  value:
+    | TaskCapabilities
+    | {
+        candidateWaiting?: boolean;
+        failedItems?: number;
+        recovery?: ManualRecoveryView;
+      }
+): value is TaskCapabilities {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "canCreateFreshTask" in value
+  );
 }
 
 export function retryActionLabel(task: TaskRecord | null): string {

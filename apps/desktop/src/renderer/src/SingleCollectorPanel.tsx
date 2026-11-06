@@ -65,6 +65,7 @@ import TaskSettingsRevisionDialog, {
 } from "./TaskSettingsRevisionDialog";
 import {
   canOpenTaskSettings,
+  prefillSingleCollectorForm,
   resetSingleCollectorForm,
   useCollectorAutoLoad
 } from "./collector-reset";
@@ -382,13 +383,18 @@ export default function SingleCollectorPanel({
     details?.task.status === "waiting_manual" &&
     details.task.error?.code === "PAGE_LIMIT_REACHED";
   const browserLeaseBlocked = leaseBlocksNewBrowserTask(browser);
-  const actionPolicy = collectionActions(details?.task || null, {
-    candidateWaiting: Boolean(waitingItem),
-    failedItems
-  });
+  const actionPolicy = collectionActions(
+    details?.task || null,
+    details?.capabilities,
+    {
+      candidateWaiting: Boolean(waitingItem),
+      failedItems
+    }
+  );
   const retryLabel = retryActionLabel(details?.task || null);
   const primaryAction = derivePrimaryTaskAction(
     details?.task || null,
+    details?.capabilities,
     {
       recovery: manualRecovery,
       candidateWaiting: Boolean(waitingItem),
@@ -743,6 +749,62 @@ export default function SingleCollectorPanel({
     }
   }
 
+  async function createFreshTask(): Promise<void> {
+    if (
+      !details ||
+      !details.capabilities.canCreateFreshTask ||
+      taskActionInFlightRef.current
+    ) {
+      return;
+    }
+    taskActionInFlightRef.current = true;
+    setBusy(true);
+    const oldTaskId = details.task.id;
+    try {
+      const seed = await window.pkulaw.prepareFreshTask(
+        oldTaskId,
+        newOperationId()
+      );
+      prefillSingleCollectorForm(seed, {
+        setQueries,
+        setMatchMode,
+        setLibrary,
+        setYearSelection,
+        setProvince,
+        setTimeliness,
+        setPageSize,
+        setPageSelection,
+        setOutputDir
+      });
+      autoLoad.holdFreshWorkspace(oldTaskId);
+      setSelectedTaskId("");
+      setDetails(null);
+      setSettingsOpen(false);
+      setSettingsRevision(null);
+      setSettingsCommitError(null);
+      setPauseDetailOpen(false);
+      setActionFeedback(null);
+      setNotice(
+        [
+          "已打开新建任务表单；旧任务仍保留在任务中心。",
+          seed.mayDuplicateDownloads
+            ? "旧任务已有下载成果，新任务不会跨任务跳过同名政策。"
+            : "",
+          seed.leaseHeld
+            ? "内置浏览器仍由其他任务占用，释放后才能启动新任务。"
+            : ""
+        ]
+          .filter(Boolean)
+          .join(" ")
+      );
+    } catch (error) {
+      setNotice(`打开新建任务失败：${String(error)}`);
+    } finally {
+      taskActionInFlightRef.current = false;
+      setBusy(false);
+    }
+  }
+
   async function choose(item: TaskItemRecord, candidate: TaskItemCandidate): Promise<void> {
     if (!selectedTaskId) return;
     setBusy(true);
@@ -1061,6 +1123,7 @@ export default function SingleCollectorPanel({
 
               <TaskRuntimePanel
                 task={details.task}
+                capabilities={details.capabilities}
                 completed={completedCount}
                 total={totalItems}
                 candidateWaiting={Boolean(waitingItem)}
@@ -1073,6 +1136,7 @@ export default function SingleCollectorPanel({
                 actionBusy={busy}
                 actionFeedback={actionFeedback}
                 onPrimaryAction={() => void runPrimaryAction()}
+                onCreateFreshTask={() => void createFreshTask()}
                 onPauseDetailOpenChange={setPauseDetailOpen}
               />
 

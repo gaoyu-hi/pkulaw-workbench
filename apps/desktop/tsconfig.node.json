@@ -34,6 +34,7 @@
     "tests/task-settings-panel.test.ts",
     "tests/task-workspace-frame.test.ts",
     "tests/task-presentation.test.ts",
-    "tests/task-runtime.test.ts"
+    "tests/task-runtime.test.ts",
+    "tests/fresh-task-actions.test.ts"
   ]
 }
