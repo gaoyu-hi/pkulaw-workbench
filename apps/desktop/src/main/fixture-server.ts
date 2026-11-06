@@ -738,9 +738,6 @@ function resultsPageHtml(params: URLSearchParams, baseUrl: string): string {
       if (!sessionStorage.getItem('codex-delayed-captcha-shown')) {
         sessionStorage.setItem('codex-delayed-captcha-shown', '1');
         overlay.style.display='grid';
-        setTimeout(() => {
-          overlay.style.display='none';
-        }, 1500);
       }
     }` : ""}
     function openBatchDialog() {
