@@ -60,9 +60,7 @@ import { useManualRecovery } from "./useManualRecovery";
 import TaskSettingsPanel from "./TaskSettingsPanel";
 import {
   resetSingleCollectorForm,
-  shouldAutoSelectTask,
-  shouldLoadTaskDetails,
-  shouldResetCollector
+  useCollectorAutoLoad
 } from "./collector-reset";
 
 interface SingleCollectorPanelProps {
@@ -159,10 +157,7 @@ export default function SingleCollectorPanel({
   const [pauseDetailOpen, setPauseDetailOpen] = useState(false);
   const startInFlightRef = useRef(false);
   const settingsInFlightRef = useRef(false);
-  const previousStatusByTaskRef = useRef<
-    Record<string, string | undefined>
-  >({});
-  const suppressedCompletedTaskIdRef = useRef("");
+  const autoLoad = useCollectorAutoLoad();
   const [notice, setNotice] = useState(
     "任务会使用当前内置浏览器，不保存账号密码，不绕过登录、滑块或机构额度。"
   );
@@ -194,7 +189,7 @@ export default function SingleCollectorPanel({
   }
 
   function selectTask(taskId: string): void {
-    suppressedCompletedTaskIdRef.current = "";
+    autoLoad.clearForExplicitSelection();
     void loadDetails(taskId);
   }
 
@@ -254,12 +249,7 @@ export default function SingleCollectorPanel({
           ""
         );
         const automaticTaskId = eventTaskId || selectedTaskId;
-        if (
-          shouldLoadTaskDetails(
-            automaticTaskId,
-            suppressedCompletedTaskIdRef.current
-          )
-        ) {
+        if (autoLoad.canLoadTaskDetails(automaticTaskId)) {
           void loadDetails(automaticTaskId).catch(() => undefined);
         }
       }
@@ -295,7 +285,7 @@ export default function SingleCollectorPanel({
 
   useEffect(() => {
     if (selectedTaskId || !tasks[0]) return;
-    if (!shouldAutoSelectTask(tasks[0].id, suppressedCompletedTaskIdRef.current)) {
+    if (!autoLoad.canAutoSelectTask(tasks[0].id)) {
       return;
     }
     void loadDetails(tasks[0].id).catch(() => undefined);
@@ -304,11 +294,8 @@ export default function SingleCollectorPanel({
   useEffect(() => {
     if (!details) return;
     const taskId = details.task.id;
-    const previousStatus = previousStatusByTaskRef.current[taskId];
     const currentStatus = details.task.status;
-    previousStatusByTaskRef.current[taskId] = currentStatus;
-    if (!shouldResetCollector(previousStatus, currentStatus)) return;
-    suppressedCompletedTaskIdRef.current = taskId;
+    if (!autoLoad.observeStatus(taskId, currentStatus)) return;
     resetSingleCollectorForm(
       appInfo?.defaultSingleOutputDir || "",
       {
@@ -525,7 +512,7 @@ export default function SingleCollectorPanel({
         },
         operationId
       });
-      suppressedCompletedTaskIdRef.current = "";
+      autoLoad.clearForNewTask();
       setSelectedTaskId(result.task.id);
       setDetails(result.details as TaskDetails);
       await refreshTaskList();

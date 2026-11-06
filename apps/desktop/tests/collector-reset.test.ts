@@ -1,11 +1,15 @@
+import { createElement, useEffect } from "react";
+import TestRenderer, { act } from "react-test-renderer";
 import { describe, expect, it } from "vitest";
 import {
   resetBatchCollectorForm,
   resetSingleCollectorForm,
   shouldAutoSelectTask,
   shouldLoadTaskDetails,
-  shouldResetCollector
+  shouldResetCollector,
+  useCollectorAutoLoad
 } from "../src/renderer/src/collector-reset";
+import type { CollectorAutoLoadController } from "../src/renderer/src/collector-reset";
 
 function recordingSetters() {
   const calls: Record<string, unknown> = {};
@@ -99,5 +103,56 @@ describe("collector completion reset", () => {
       catalogFormat: "xlsx",
       outputDir: "D:/batch-default"
     });
+  });
+
+  it("keeps the completed task suppressed across production async ordering", async () => {
+    let controller: CollectorAutoLoadController | undefined;
+
+    function HookProbe({
+      onReady
+    }: {
+      onReady: (value: CollectorAutoLoadController) => void;
+    }) {
+      const value = useCollectorAutoLoad();
+      useEffect(() => {
+        onReady(value);
+      }, [onReady, value]);
+      return null;
+    }
+
+    const onReady = (value: CollectorAutoLoadController) => {
+      controller = value;
+    };
+
+    let renderer: TestRenderer.ReactTestRenderer | undefined;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(HookProbe, { onReady })
+      );
+      await Promise.resolve();
+    });
+
+    expect(controller).toBeDefined();
+    const current = controller as CollectorAutoLoadController;
+
+    await act(async () => {
+      expect(current.observeStatus("task-a", "running")).toBe(false);
+      expect(current.observeStatus("task-a", "completed")).toBe(true);
+      await Promise.resolve();
+    });
+
+    expect(current.canLoadTaskDetails("task-a")).toBe(false);
+    expect(current.canAutoSelectTask("task-a")).toBe(false);
+    expect(current.canLoadTaskDetails("task-b")).toBe(true);
+    expect(current.canAutoSelectTask("task-b")).toBe(true);
+
+    await act(async () => {
+      current.clearForExplicitSelection();
+      await Promise.resolve();
+    });
+
+    expect(current.canLoadTaskDetails("task-a")).toBe(true);
+    expect(current.canAutoSelectTask("task-a")).toBe(true);
+    renderer?.unmount();
   });
 });

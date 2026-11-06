@@ -67,9 +67,7 @@ import { useManualRecovery } from "./useManualRecovery";
 import TaskSettingsPanel from "./TaskSettingsPanel";
 import {
   resetBatchCollectorForm,
-  shouldAutoSelectTask,
-  shouldLoadTaskDetails,
-  shouldResetCollector
+  useCollectorAutoLoad
 } from "./collector-reset";
 
 interface BatchCollectorPanelProps {
@@ -154,10 +152,7 @@ export default function BatchCollectorPanel({
   const [pauseDetailOpen, setPauseDetailOpen] = useState(false);
   const startInFlightRef = useRef(false);
   const settingsInFlightRef = useRef(false);
-  const previousStatusByTaskRef = useRef<
-    Record<string, string | undefined>
-  >({});
-  const suppressedCompletedTaskIdRef = useRef("");
+  const autoLoad = useCollectorAutoLoad();
   const [notice, setNotice] = useState(
     "批量任务会先确认页数和规模，再使用当前内置浏览器执行受控下载。"
   );
@@ -189,7 +184,7 @@ export default function BatchCollectorPanel({
   }
 
   function selectTask(taskId: string): void {
-    suppressedCompletedTaskIdRef.current = "";
+    autoLoad.clearForExplicitSelection();
     void loadDetails(taskId);
   }
 
@@ -242,12 +237,7 @@ export default function BatchCollectorPanel({
           ""
         );
         const automaticTaskId = taskId || selectedTaskId;
-        if (
-          shouldLoadTaskDetails(
-            automaticTaskId,
-            suppressedCompletedTaskIdRef.current
-          )
-        ) {
+        if (autoLoad.canLoadTaskDetails(automaticTaskId)) {
           void loadDetails(automaticTaskId).catch(() => undefined);
         }
       }
@@ -283,7 +273,7 @@ export default function BatchCollectorPanel({
 
   useEffect(() => {
     if (selectedTaskId || !tasks[0]) return;
-    if (!shouldAutoSelectTask(tasks[0].id, suppressedCompletedTaskIdRef.current)) {
+    if (!autoLoad.canAutoSelectTask(tasks[0].id)) {
       return;
     }
     void loadDetails(tasks[0].id).catch(() => undefined);
@@ -292,11 +282,8 @@ export default function BatchCollectorPanel({
   useEffect(() => {
     if (!details) return;
     const taskId = details.task.id;
-    const previousStatus = previousStatusByTaskRef.current[taskId];
     const currentStatus = details.task.status;
-    previousStatusByTaskRef.current[taskId] = currentStatus;
-    if (!shouldResetCollector(previousStatus, currentStatus)) return;
-    suppressedCompletedTaskIdRef.current = taskId;
+    if (!autoLoad.observeStatus(taskId, currentStatus)) return;
     resetBatchCollectorForm(
       appInfo?.defaultBatchOutputDir || "",
       {
@@ -505,7 +492,7 @@ export default function BatchCollectorPanel({
         operationId
       });
       setDetails(result.details as BatchTaskDetails);
-      suppressedCompletedTaskIdRef.current = "";
+      autoLoad.clearForNewTask();
       setSelectedTaskId(result.task.id);
       await refreshTaskList();
       setNotice(

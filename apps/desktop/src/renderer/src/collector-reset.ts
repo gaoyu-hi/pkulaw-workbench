@@ -3,6 +3,7 @@ import type {
   PageSelection,
   YearSelection
 } from "../../shared/protocol";
+import { useCallback, useRef } from "react";
 import { defaultCollectorMatchMode } from "./collector-workflow";
 
 export type CollectorLibrary = "central" | "local" | "both";
@@ -31,6 +32,66 @@ export function shouldLoadTaskDetails(
   suppressedTaskId: string | null | undefined
 ): boolean {
   return shouldAutoSelectTask(taskId, suppressedTaskId);
+}
+
+export interface CollectorAutoLoadController {
+  observeStatus(
+    taskId: string,
+    currentStatus: string | null | undefined
+  ): boolean;
+  canAutoSelectTask(taskId: string | null | undefined): boolean;
+  canLoadTaskDetails(taskId: string | null | undefined): boolean;
+  clearForExplicitSelection(): void;
+  clearForNewTask(): void;
+}
+
+export function useCollectorAutoLoad(): CollectorAutoLoadController {
+  const previousStatusByTaskRef = useRef<
+    Record<string, string | undefined>
+  >({});
+  const suppressedCompletedTaskIdRef = useRef("");
+
+  const observeStatus = useCallback(
+    (taskId: string, currentStatus: string | null | undefined): boolean => {
+      const previousStatus = previousStatusByTaskRef.current[taskId];
+      previousStatusByTaskRef.current[taskId] =
+        currentStatus ?? undefined;
+      if (!shouldResetCollector(previousStatus, currentStatus)) {
+        return false;
+      }
+      suppressedCompletedTaskIdRef.current = taskId;
+      return true;
+    },
+    []
+  );
+
+  const canAutoSelectTask = useCallback(
+    (taskId: string | null | undefined): boolean =>
+      shouldAutoSelectTask(taskId, suppressedCompletedTaskIdRef.current),
+    []
+  );
+
+  const canLoadTaskDetails = useCallback(
+    (taskId: string | null | undefined): boolean =>
+      shouldLoadTaskDetails(taskId, suppressedCompletedTaskIdRef.current),
+    []
+  );
+
+  const clearForExplicitSelection = useCallback(() => {
+    suppressedCompletedTaskIdRef.current = "";
+  }, []);
+
+  const clearForNewTask = useCallback(() => {
+    suppressedCompletedTaskIdRef.current = "";
+  }, []);
+
+  return {
+    observeStatus,
+    canAutoSelectTask,
+    canLoadTaskDetails,
+    clearForExplicitSelection,
+    clearForNewTask
+  };
 }
 
 export interface SingleCollectorResetSetters {
