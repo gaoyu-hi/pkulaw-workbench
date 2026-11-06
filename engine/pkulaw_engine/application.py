@@ -883,6 +883,9 @@ class EngineApplication:
             result = self._resume_after_manual(
                 task_id,
                 operation_id=operation_id,
+                recovery_token=str(
+                    params.get("recoveryToken") or ""
+                ).strip(),
             )
             follow_up = (
                 [
@@ -1354,9 +1357,35 @@ class EngineApplication:
         task_id: str,
         *,
         operation_id: str,
+        recovery_token: str = "",
     ) -> dict[str, Any]:
+        task = self.store.get_task(task_id)
+        if task is None:
+            raise ValidationError(
+                "TASK_NOT_FOUND",
+                f"task {task_id} was not found",
+            )
+        checkpoint_before = dict(task.get("checkpoint") or {})
+        search_recovery = dict(
+            checkpoint_before.get("searchRecovery") or {}
+        )
+        current_action = dict(search_recovery.get("action") or {})
+        current_event = str(search_recovery.get("eventId") or "")
+        current_action_id = str(
+            current_action.get("actionId") or ""
+        )
+        if recovery_token and current_event != recovery_token:
+            raise ValidationError(
+                "MANUAL_RECOVERY_STALE",
+                "恢复令牌已失效，不能唤醒新的验证码等待",
+            )
         fingerprint = json.dumps(
-            {"taskId": task_id, "action": "resume-after-manual"},
+            {
+                "taskId": task_id,
+                "action": "resume-after-manual",
+                "recoveryToken": recovery_token,
+                "actionId": current_action_id,
+            },
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -1379,9 +1408,6 @@ class EngineApplication:
                     "details": self._task_details(task),
                 }
 
-            task = self.store.get_task(task_id)
-            if task is None:
-                raise ValidationError("TASK_NOT_FOUND", f"task {task_id} was not found")
             manager = (
                 self.single_manager
                 if task["mode"] == "single"
@@ -1404,6 +1430,27 @@ class EngineApplication:
                 }
 
             self.browser_bridge.user_continue()
+            accepted_at = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ",
+                time.gmtime(),
+            )
+            accepted_checkpoint = dict(
+                (self.store.get_task(task_id) or {}).get(
+                    "checkpoint"
+                )
+                or {}
+            )
+            accepted_checkpoint["manualRecovery"] = {
+                **dict(
+                    accepted_checkpoint.get("manualRecovery") or {}
+                ),
+                "acceptedEventId": recovery_token,
+                "acceptedAt": accepted_at,
+            }
+            self.store.update_task(
+                task_id,
+                checkpoint=accepted_checkpoint,
+            )
             if decision.action == "continue":
                 details = manager.continue_task(task_id)
             else:
@@ -1424,6 +1471,7 @@ class EngineApplication:
             checkpoint = dict(current.get("checkpoint") or {})
             checkpoint.pop("accessRecovery", None)
             checkpoint["manualRecovery"] = {
+                **dict(checkpoint.get("manualRecovery") or {}),
                 "action": decision.action,
                 "reason": decision.reason,
                 "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

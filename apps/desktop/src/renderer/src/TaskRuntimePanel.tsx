@@ -65,6 +65,115 @@ export function ManualRecoveryStatus({
   );
 }
 
+const RECOVERY_PHASE_LABELS: Record<string, string> = {
+  prepared: "原动作已准备",
+  waiting: "等待人工验证",
+  observing: "观察页面稳定性",
+  retrying: "重试原动作",
+  reused: "已复用原动作结果",
+  completed: "原动作已完成",
+  boundary: "已进入采集边界",
+  exhausted: "需要人工核验断点"
+};
+
+const RECOVERY_ACTION_LABELS: Record<string, string> = {
+  "keyword-submission": "关键词检索",
+  "year-filter-switch": "年份切换",
+  "filter-change": "筛选切换",
+  "grouping-change": "切换不分组",
+  "page-size-change": "设置每页条数",
+  "next-page": "翻页"
+};
+
+interface CaptchaRecoveryView {
+  recovery: Record<string, unknown>;
+  action: Record<string, unknown>;
+  request: Record<string, unknown>;
+  governor: Record<string, unknown>;
+}
+
+function captchaRecoveryView(
+  task: TaskRecord
+): CaptchaRecoveryView | null {
+  const recovery = asRecord(task.checkpoint?.searchRecovery);
+  const action = asRecord(recovery.action);
+  if (!Object.keys(action).length) return null;
+  return {
+    recovery,
+    action,
+    request: asRecord(action.request),
+    governor: asRecord(recovery.governor)
+  };
+}
+
+export function renderRecoveryCard(task: TaskRecord): string {
+  const view = captchaRecoveryView(task);
+  if (!view) return "";
+  const recovery = view.recovery;
+  const action = view.action;
+  const request = view.request;
+  const governor = view.governor;
+  const captchaCount = Number(governor.captcha_waits || 0);
+  const phase = String(recovery.phase || "");
+  const kind = String(action.kind || "");
+  const year = String(request.year || "");
+  const actionId = String(action.actionId || "");
+  return [
+    `第 ${captchaCount} 次验证码`,
+    `当前动作：${RECOVERY_ACTION_LABELS[kind] || kind || "未记录"}`,
+    `年份：${year || "未记录"}`,
+    `尝试次数：${Number(recovery.attemptCount || 0)}`,
+    String(RECOVERY_PHASE_LABELS[phase] || phase || "未记录"),
+    recovery.reusedResult
+      ? "已复用成功结果"
+      : "尚未复用成功结果",
+    recovery.breakerReason
+      ? `熔断原因：${String(recovery.breakerReason)}`
+      : "",
+    actionId ? `actionId：${actionId}` : ""
+  ].filter(Boolean).join("；");
+}
+
+export function CaptchaRecoveryCard({
+  task
+}: {
+  task: TaskRecord;
+}): React.JSX.Element | null {
+  const view = captchaRecoveryView(task);
+  if (!view) return null;
+  const recovery = view.recovery;
+  const action = view.action;
+  const request = view.request;
+  const governor = view.governor;
+  return (
+    <section
+      className={`runtime-card captcha-recovery-card ${String(recovery.phase || "")}`}
+      data-testid="captcha-recovery-card"
+    >
+      <div className="runtime-card-heading">
+        <strong>验证码恢复状态</strong>
+        <span>{String(RECOVERY_PHASE_LABELS[String(recovery.phase || "")] || recovery.phase || "未记录")}</span>
+      </div>
+      <div className="runtime-facts">
+        <span>验证码 <b>第 {Number(governor.captcha_waits || 0)} 次</b></span>
+        <span>动作 <b>{RECOVERY_ACTION_LABELS[String(action.kind || "")] || String(action.kind || "未记录")}</b></span>
+        <span>年份 <b>{String(request.year || "未记录")}</b></span>
+        <span>尝试 <b>{Number(recovery.attemptCount || 0)}</b></span>
+        <span>原结果 <b>{recovery.reusedResult ? "已复用" : "待核验"}</b></span>
+      </div>
+      {Boolean(recovery.breakerReason) && (
+        <p className="partial-progress-warning">
+          熔断原因：{String(recovery.breakerReason)}
+        </p>
+      )}
+      <ExpandableValue
+        label="actionId"
+        value={String(action.actionId || "")}
+      />
+    </section>
+  );
+}
+
 export function TaskPrimaryActionBar({
   action,
   label,
@@ -790,6 +899,7 @@ export function TaskRuntimePanel({
           captchaCheckedAt={browserCaptchaCheckedAt}
           captchaSelector={browserCaptchaSelector}
         />
+        <CaptchaRecoveryCard task={task} />
         {downloadIntentView(task.checkpoint) ? (
           <DownloadIntentCard source={task.checkpoint} />
         ) : (

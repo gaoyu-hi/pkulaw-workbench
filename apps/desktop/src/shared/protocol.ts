@@ -620,7 +620,8 @@ export interface DesktopApi {
   getTaskDetails(taskId: string): Promise<TaskDetails>;
   resumeTaskAfterManual(
     taskId: string,
-    operationId: string
+    operationId: string,
+    recoveryToken: string
   ): Promise<ManualRecoveryResult>;
   applyTaskSettings(
     taskId: string,

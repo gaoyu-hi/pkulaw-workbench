@@ -54,11 +54,16 @@ const api: DesktopApi = {
     ipcRenderer.invoke("tasks:get", taskId) as Promise<TaskRecord>,
   getTaskDetails: (taskId: string) =>
     ipcRenderer.invoke("tasks:get-details", taskId) as Promise<TaskDetails>,
-  resumeTaskAfterManual: (taskId: string, operationId: string) =>
+  resumeTaskAfterManual: (
+    taskId: string,
+    operationId: string,
+    recoveryToken: string
+  ) =>
     ipcRenderer.invoke(
       "tasks:resume-after-manual",
       taskId,
-      operationId
+      operationId,
+      recoveryToken
     ) as Promise<ManualRecoveryResult>,
   applyTaskSettings: (
     taskId: string,

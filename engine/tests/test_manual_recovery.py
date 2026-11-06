@@ -206,6 +206,94 @@ class ManualRecoveryApplicationTests(unittest.TestCase):
         self.assertEqual(second["result"]["action"], "continue")
         browser_continue.assert_called_once()
 
+    def test_stale_recovery_token_cannot_wake_current_wait(self) -> None:
+        self.store.update_task(
+            str(self.task["id"]),
+            checkpoint={
+                "searchRecovery": {
+                    "version": 1,
+                    "eventId": "recovery-current",
+                    "phase": "waiting",
+                    "action": {
+                        "actionId": "action-current",
+                    },
+                }
+            },
+        )
+        with patch.object(
+            self.application.browser_bridge,
+            "user_continue",
+        ) as browser_continue:
+            with self.assertRaises(ValidationError) as context:
+                self.application._resume_after_manual(
+                    str(self.task["id"]),
+                    operation_id="old-request",
+                    recovery_token="recovery-already-consumed",
+                )
+
+        self.assertEqual(
+            context.exception.code,
+            "MANUAL_RECOVERY_STALE",
+        )
+        browser_continue.assert_not_called()
+
+    def test_current_recovery_token_is_accepted_before_continue(self) -> None:
+        task_id = str(self.task["id"])
+        self.store.update_task(
+            task_id,
+            checkpoint={
+                "searchRecovery": {
+                    "version": 1,
+                    "eventId": "recovery-current",
+                    "phase": "waiting",
+                    "action": {
+                        "actionId": "action-current",
+                    },
+                }
+            },
+        )
+        accepted_events: list[str] = []
+
+        def continue_task(_task_id: str) -> dict[str, object]:
+            current = self.store.get_task(task_id)
+            accepted_events.append(
+                str(
+                    dict(
+                        (current or {}).get("checkpoint") or {}
+                    )
+                    .get("manualRecovery", {})
+                    .get("acceptedEventId")
+                    or ""
+                )
+            )
+            return self._details()
+
+        with (
+            patch.object(
+                self.application.browser_bridge,
+                "user_continue",
+                return_value={"captchaVisible": False},
+            ),
+            patch.object(
+                self.application.single_manager,
+                "has_live_controller",
+                return_value=True,
+            ),
+            patch.object(
+                self.application.single_manager,
+                "continue_task",
+                side_effect=continue_task,
+            ),
+        ):
+            result = self.application._resume_after_manual(
+                task_id,
+                operation_id="current-request",
+                recovery_token="recovery-current",
+            )
+
+        self.assertEqual(result["action"], "continue")
+        self.assertEqual(accepted_events, ["recovery-current"])
+
 
 class ManualRecoveryRestartValidationTests(unittest.TestCase):
     def setUp(self) -> None:

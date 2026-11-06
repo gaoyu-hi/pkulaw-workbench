@@ -8,6 +8,7 @@ import {
   manualRecoveryViewForPhase,
   observeManualRecovery
 } from "../src/renderer/src/useManualRecovery";
+import { renderRecoveryCard } from "../src/renderer/src/TaskRuntimePanel";
 import type {
   BrowserHostState,
   TaskRecord
@@ -265,5 +266,77 @@ describe("manual recovery UI", () => {
         message: "source failed"
       })
     ).toBe("SOURCE_ACCESS_ERROR");
+  });
+
+  it("carries the active recovery token after three clear samples", () => {
+    const recoveryTask = {
+      ...task,
+      checkpoint: {
+        searchRecovery: {
+          eventId: "recovery-event-1",
+          phase: "waiting",
+          governor: { captcha_waits: 2 },
+          attemptCount: 0,
+          reusedResult: false,
+          breakerReason: "",
+          action: {
+            actionId: "action-1",
+            kind: "year-filter-switch",
+            request: {
+              query: "人工智能",
+              library: "central",
+              year: "2022"
+            },
+            attemptCount: 0
+          }
+        }
+      }
+    } satisfies TaskRecord;
+    const controller = createManualRecoveryController(
+      () => "manual-operation-token"
+    );
+
+    expect(controller.observe(recoveryTask, clearBrowser).shouldResume).toBe(
+      false
+    );
+    expect(controller.observe(recoveryTask, clearBrowser).shouldResume).toBe(
+      false
+    );
+    expect(controller.observe(recoveryTask, clearBrowser)).toMatchObject({
+      shouldResume: true,
+      recoveryToken: "recovery-event-1"
+    });
+  });
+
+  it("renders captcha count, action target, reuse and breaker state", () => {
+    const recoveryTask = {
+      ...task,
+      checkpoint: {
+        searchRecovery: {
+          eventId: "recovery-event-2",
+          phase: "boundary",
+          governor: { captcha_waits: 2 },
+          attemptCount: 1,
+          reusedResult: true,
+          breakerReason: "same-action-captcha",
+          action: {
+            actionId: "action-2",
+            kind: "year-filter-switch",
+            request: {
+              query: "人工智能",
+              library: "central",
+              year: "2022"
+            },
+            attemptCount: 1
+          }
+        }
+      }
+    } satisfies TaskRecord;
+
+    const text = renderRecoveryCard(recoveryTask);
+    expect(text).toContain("第 2 次验证码");
+    expect(text).toContain("年份：2022");
+    expect(text).toContain("已复用成功结果");
+    expect(text).toContain("same-action-captcha");
   });
 });

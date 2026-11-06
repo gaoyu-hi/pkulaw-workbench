@@ -36,6 +36,7 @@ export interface ManualRecoveryStep extends ManualRecoveryView {
   stableSamples: number;
   shouldResume: boolean;
   operationId?: string;
+  recoveryToken?: string;
 }
 
 export interface ManualRecoveryObservationInput {
@@ -59,6 +60,7 @@ export function manualRecoveryErrorCode(error: unknown): string {
       "CAPTCHA_VISIBLE",
       "MANUAL_ACTION_REQUIRED",
       "LOGIN_REQUIRED",
+      "MANUAL_RECOVERY_STALE",
       "SOURCE_ACCESS_ERROR"
     ].find((code) => message.includes(code)) || ""
   );
@@ -70,6 +72,13 @@ function isAccessWait(task: TaskRecord | null | undefined): boolean {
       ["waiting_login", "waiting_manual"].includes(task.status) &&
       ACCESS_WAIT_CODES.has(accessWaitCode(task))
   );
+}
+
+function recoveryTokenForTask(
+  task: TaskRecord | null | undefined
+): string {
+  const recovery = recordValue(task?.checkpoint?.searchRecovery);
+  return String(recovery.eventId || "");
 }
 
 function browserBelongsToTask(
@@ -207,6 +216,7 @@ class Controller implements ManualRecoveryController {
   private stableSamples = 0;
   private phase: ManualRecoveryPhase = "idle";
   private operationId = "";
+  private recoveryToken = "";
   private failedMessage = "";
   private failureDetectedAt = 0;
   private suppressAutomaticRecovery = false;
@@ -234,7 +244,10 @@ class Controller implements ManualRecoveryController {
       ),
       stableSamples: this.stableSamples,
       shouldResume: false,
-      ...(this.operationId ? { operationId: this.operationId } : {})
+      ...(this.operationId ? { operationId: this.operationId } : {}),
+      ...(this.recoveryToken
+        ? { recoveryToken: this.recoveryToken }
+        : {})
     };
   }
 
@@ -243,6 +256,7 @@ class Controller implements ManualRecoveryController {
     this.stableSamples = 0;
     this.phase = "idle";
     this.operationId = "";
+    this.recoveryToken = "";
     this.failedMessage = "";
     this.failureDetectedAt = 0;
     this.suppressAutomaticRecovery = false;
@@ -265,6 +279,7 @@ class Controller implements ManualRecoveryController {
         this.stableSamples = 0;
         this.phase = "idle";
         this.operationId = "";
+        this.recoveryToken = "";
         this.failedMessage = "";
         this.failureDetectedAt = 0;
         this.suppressAutomaticRecovery = false;
@@ -280,6 +295,7 @@ class Controller implements ManualRecoveryController {
       if (browser?.captchaVisible || browser?.loginVisible) {
         this.succeeded = false;
         this.operationId = "";
+        this.recoveryToken = "";
       }
       this.stableSamples = 0;
       if (!this.suppressAutomaticRecovery) {
@@ -316,6 +332,7 @@ class Controller implements ManualRecoveryController {
       return this.currentStep();
     }
     this.operationId = this.operationIdFactory();
+    this.recoveryToken = recoveryTokenForTask(task);
     return {
       ...this.currentStep(),
       phase: "verifying",
@@ -339,6 +356,7 @@ class Controller implements ManualRecoveryController {
     this.failedMessage = detail;
     this.stableSamples = 0;
     this.operationId = "";
+    this.recoveryToken = "";
     this.succeeded = false;
     if (code === "CAPTCHA_VISIBLE") {
       this.phase = "observing";
@@ -355,6 +373,7 @@ class Controller implements ManualRecoveryController {
     this.stableSamples = 0;
     this.phase = "observing";
     this.operationId = "";
+    this.recoveryToken = "";
     this.failedMessage = "";
     this.failureDetectedAt = 0;
     this.suppressAutomaticRecovery = false;
@@ -366,6 +385,7 @@ class Controller implements ManualRecoveryController {
     this.stableSamples = 0;
     this.phase = "idle";
     this.operationId = "";
+    this.recoveryToken = "";
     this.failedMessage = "";
     this.failureDetectedAt = 0;
     this.suppressAutomaticRecovery = false;
@@ -493,7 +513,11 @@ export function useManualRecovery({
     controller.markResumeStarted();
     setView(manualRecoveryViewForPhase("resuming"));
     void window.pkulaw
-      .resumeTaskAfterManual(recoveryTaskId, operationId)
+      .resumeTaskAfterManual(
+        recoveryTaskId,
+        operationId,
+        step.recoveryToken || ""
+      )
       .then(async (result) => {
         if (
           epoch !== epochRef.current ||

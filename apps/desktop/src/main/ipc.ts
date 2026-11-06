@@ -322,13 +322,19 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
   );
   ipcMain.handle(
     "tasks:resume-after-manual",
-    async (_event, taskId: unknown, operationId: unknown) => {
+    async (
+      _event,
+      taskId: unknown,
+      operationId: unknown,
+      recoveryToken: unknown
+    ) => {
       try {
         const result = await pythonService.request(
           "task.resume-after-manual",
           {
             taskId: assertTaskId(taskId),
-            operationId: requiredOperationId(operationId)
+            operationId: requiredOperationId(operationId),
+            recoveryToken: String(recoveryToken || "").trim()
           }
         );
         return result as unknown as ManualRecoveryResult;
