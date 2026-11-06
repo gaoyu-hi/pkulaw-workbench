@@ -8,6 +8,7 @@ export type ArtifactDisposition = "preserve" | "delete";
 export interface TaskSettingsRevisionDialogProps {
   preview: TaskSettingsRevisionPreview;
   busy: boolean;
+  error?: string | null;
   onCommit: (policy: ArtifactDisposition) => Promise<void>;
   onCancel: () => void;
 }
@@ -27,12 +28,15 @@ function formatBytes(value: number): string {
 export default function TaskSettingsRevisionDialog({
   preview,
   busy,
+  error,
   onCommit,
   onCancel
 }: TaskSettingsRevisionDialogProps): React.JSX.Element {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const summary = preview.artifactSummary;
   const protectedCount = summary.protectedFileCount;
+  const protectedFiles = preview.protectedFiles || [];
+  const deleteBlocked = protectedCount > 0;
 
   return (
     <div className="task-dialog-backdrop">
@@ -82,10 +86,22 @@ export default function TaskSettingsRevisionDialog({
           </div>
         </dl>
 
+        {error && <p className="task-settings-error">{error}</p>}
+
         {protectedCount > 0 && (
-          <p className="task-settings-error">
-            有 {protectedCount} 个文件受保护或与其他任务共享，永久删除可能被阻止。
-          </p>
+          <div className="task-settings-protected-files">
+            <p className="task-settings-error">
+              有 {protectedCount} 个文件受保护或与其他任务共享，永久删除将被阻止。
+            </p>
+            <ul>
+              {protectedFiles.map((file) => (
+                <li key={`${file.path}:${file.reason}`}>
+                  <span className="task-settings-protected-path">{file.path}</span>
+                  <span className="task-settings-protected-reason">{file.reason}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
 
         {!confirmingDelete ? (
@@ -109,7 +125,8 @@ export default function TaskSettingsRevisionDialog({
             <button
               type="button"
               className="danger-button"
-              disabled={busy}
+              disabled={busy || deleteBlocked}
+              title={deleteBlocked ? "存在受保护或共享文件，无法永久删除" : undefined}
               onClick={() => setConfirmingDelete(true)}
             >
               永久删除旧结果并重新扫描
@@ -132,7 +149,7 @@ export default function TaskSettingsRevisionDialog({
               <button
                 type="button"
                 className="danger-button"
-                disabled={busy}
+                disabled={busy || deleteBlocked}
                 onClick={() => void onCommit("delete")}
               >
                 {busy ? "正在删除…" : "确认永久删除并重新扫描"}

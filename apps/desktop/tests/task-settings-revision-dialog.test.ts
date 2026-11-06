@@ -32,6 +32,7 @@ function buttons(renderer: TestRenderer.ReactTestRenderer) {
         .map((child) => String(child))
         .join("")
     ),
+    disabled: Boolean(button.props.disabled),
     click: button.props.onClick as (() => void) | undefined
   }));
 }
@@ -114,32 +115,115 @@ describe("TaskSettingsRevisionDialog", () => {
     renderer?.unmount();
   });
 
-  it("warns when protected files exist", () => {
+  it("warns when protected files exist", async () => {
+    const protectedPreview = {
+      ...preview,
+      artifactSummary: {
+        ...preview.artifactSummary,
+        protectedFileCount: 2
+      },
+      protectedFiles: [
+        {
+          path: "D:/shared.docx",
+          rawPath: "D:/shared.docx",
+          taskIds: ["task-1", "task-2"],
+          sources: ["batch"],
+          exists: true,
+          canTrash: false,
+          reason: "SHARED_WITH_OTHER_TASK"
+        },
+        {
+          path: "D:/outside.docx",
+          rawPath: "D:/outside.docx",
+          taskIds: ["task-1"],
+          sources: ["artifact"],
+          exists: true,
+          canTrash: false,
+          reason: "OUTSIDE_TASK_OUTPUT"
+        }
+      ]
+    };
     const html = renderToStaticMarkup(
       createElement(TaskSettingsRevisionDialog, {
-        preview: {
-          ...preview,
-          artifactSummary: {
-            ...preview.artifactSummary,
-            protectedFileCount: 2
-          },
-          protectedFiles: [
-            {
-              path: "D:/shared.docx",
-              rawPath: "D:/shared.docx",
-              taskIds: ["task-1", "task-2"],
-              sources: ["batch"],
-              exists: true,
-              canTrash: false,
-              reason: "SHARED_WITH_OTHER_TASK"
-            }
-          ]
-        },
+        preview: protectedPreview,
         busy: false,
         onCommit: async () => undefined,
         onCancel: () => undefined
       })
     );
-    expect(html).toContain("有 2 个文件受保护");
+    expect(html).toContain("D:/shared.docx");
+    expect(html).toContain("SHARED_WITH_OTHER_TASK");
+    expect(html).toContain("D:/outside.docx");
+    expect(html).toContain("OUTSIDE_TASK_OUTPUT");
+    let renderer: TestRenderer.ReactTestRenderer | undefined;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(TaskSettingsRevisionDialog, {
+          preview: protectedPreview,
+          busy: false,
+          onCommit: async () => undefined,
+          onCancel: () => undefined
+        })
+      );
+      await Promise.resolve();
+    });
+    const deleteButton = buttons(renderer as TestRenderer.ReactTestRenderer).find(
+      (item) => item.text.includes("永久删除旧结果并重新扫描")
+    );
+    expect(deleteButton?.disabled).toBe(true);
+    renderer?.unmount();
+  });
+
+  it("shows a delete-blocked error and protected files without closing", async () => {
+    const protectedPreview = {
+      ...preview,
+      artifactSummary: {
+        ...preview.artifactSummary,
+        protectedFileCount: 1
+      },
+      protectedFiles: [
+        {
+          path: "D:/shared.docx",
+          rawPath: "D:/shared.docx",
+          taskIds: ["task-1", "task-2"],
+          sources: ["batch"],
+          exists: true,
+          canTrash: false,
+          reason: "SHARED_WITH_OTHER_TASK"
+        }
+      ]
+    };
+    const onCommit = vi.fn(async (_policy: ArtifactDisposition) => undefined);
+    const html = renderToStaticMarkup(
+      createElement(TaskSettingsRevisionDialog, {
+        preview: protectedPreview,
+        busy: false,
+        error: "TASK_OUTPUT_DELETE_BLOCKED：永久删除被阻止",
+        onCommit,
+        onCancel: () => undefined
+      })
+    );
+    expect(html).toContain("TASK_OUTPUT_DELETE_BLOCKED");
+    expect(html).toContain("D:/shared.docx");
+    expect(html).toContain("SHARED_WITH_OTHER_TASK");
+    let renderer: TestRenderer.ReactTestRenderer | undefined;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(TaskSettingsRevisionDialog, {
+          preview: protectedPreview,
+          busy: false,
+          error: "TASK_OUTPUT_DELETE_BLOCKED：永久删除被阻止",
+          onCommit,
+          onCancel: () => undefined
+        })
+      );
+      await Promise.resolve();
+    });
+    const deleteButton = buttons(renderer as TestRenderer.ReactTestRenderer).find(
+      (item) => item.text.includes("永久删除旧结果并重新扫描")
+    );
+    expect(deleteButton?.disabled).toBe(true);
+    expect(onCommit).not.toHaveBeenCalled();
+    renderer?.unmount();
   });
 });

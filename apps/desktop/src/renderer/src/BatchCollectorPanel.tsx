@@ -156,6 +156,8 @@ export default function BatchCollectorPanel({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsRevision, setSettingsRevision] =
     useState<TaskSettingsRevisionPreview | null>(null);
+  const [settingsCommitError, setSettingsCommitError] =
+    useState<string | null>(null);
   const [pauseDetailOpen, setPauseDetailOpen] = useState(false);
   const startInFlightRef = useRef(false);
   const settingsInFlightRef = useRef(false);
@@ -567,6 +569,7 @@ export default function BatchCollectorPanel({
         return;
       }
       setSettingsRevision(preview);
+      setSettingsCommitError(null);
     } catch (error) {
       setNotice(`生成任务设置修订失败：${String(error)}`);
       throw error;
@@ -590,14 +593,15 @@ export default function BatchCollectorPanel({
       setDetails(result.details as BatchTaskDetails);
       setSelectedTaskId(result.task.id);
       setSettingsRevision(null);
+      setSettingsCommitError(null);
       setSettingsOpen(false);
       setNotice(
         `任务设置已保存，配置版本 ${result.generation} 已从新扫描起点运行。`
       );
       await refreshTaskList();
     } catch (error) {
+      setSettingsCommitError(String(error));
       setNotice(`保存任务设置失败：${String(error)}`);
-      throw error;
     } finally {
       settingsInFlightRef.current = false;
       setBusy(false);
@@ -1032,8 +1036,12 @@ export default function BatchCollectorPanel({
             <TaskSettingsRevisionDialog
               preview={settingsRevision}
               busy={busy}
+              error={settingsCommitError}
               onCommit={commitSettings}
-              onCancel={() => setSettingsRevision(null)}
+              onCancel={() => {
+                setSettingsRevision(null);
+                setSettingsCommitError(null);
+              }}
             />
           ) : undefined
         }
@@ -1053,8 +1061,12 @@ export default function BatchCollectorPanel({
         <TaskSettingsRevisionDialog
           preview={settingsRevision}
           busy={busy}
+          error={settingsCommitError}
           onCommit={commitSettings}
-          onCancel={() => setSettingsRevision(null)}
+          onCancel={() => {
+            setSettingsRevision(null);
+            setSettingsCommitError(null);
+          }}
         />
       )}
     </>
