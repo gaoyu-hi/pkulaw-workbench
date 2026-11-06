@@ -846,11 +846,13 @@ async function runStage2Smoke(window: BrowserWindow, service: PythonService): Pr
       process.env.PKULAW_SMOKE_SCREENSHOT ||
       path.join(process.env.PKULAW_DATA_DIR || app.getPath("userData"), "smoke.png");
     await fsp.mkdir(path.dirname(screenshotPath), { recursive: true });
-    const sources = await desktopCapturer.getSources({
-      types: ["window"],
-      thumbnailSize: { width: 1440, height: 920 },
-      fetchWindowIcons: false
-    });
+    const sources = await desktopCapturer
+      .getSources({
+        types: ["window"],
+        thumbnailSize: { width: 1440, height: 920 },
+        fetchWindowIcons: false
+      })
+      .catch(() => [] as Electron.DesktopCapturerSource[]);
     const source =
       sources.find((item) => item.name.includes("法宝工作台")) ||
       sources.find((item) => item.name.includes("Electron"));
@@ -996,11 +998,13 @@ async function captureApplicationWindow(
   screenshotPath: string
 ): Promise<void> {
   await fsp.mkdir(path.dirname(screenshotPath), { recursive: true });
-  const sources = await desktopCapturer.getSources({
-    types: ["window"],
-    thumbnailSize: { width: 1440, height: 920 },
-    fetchWindowIcons: false
-  });
+  const sources = await desktopCapturer
+    .getSources({
+      types: ["window"],
+      thumbnailSize: { width: 1440, height: 920 },
+      fetchWindowIcons: false
+    })
+    .catch(() => [] as Electron.DesktopCapturerSource[]);
   const source =
     sources.find((item) => item.name.includes("法宝工作台")) ||
     sources.find((item) => item.name.includes("Electron"));

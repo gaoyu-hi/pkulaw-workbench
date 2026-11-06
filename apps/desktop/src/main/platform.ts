@@ -42,12 +42,12 @@ export function isBundledEngineConfig(
   platform: NodeJS.Platform,
   candidate: string
 ): boolean {
-  const executableName = path.basename(String(candidate || ""));
+  const value = String(candidate || "");
   if (platform === "win32") {
-    return executableName.toLowerCase() === "pkulaw-engine.exe";
+    return path.win32.basename(value).toLowerCase() === "pkulaw-engine.exe";
   }
   if (platform === "darwin") {
-    return executableName === "pkulaw-engine";
+    return path.posix.basename(value) === "pkulaw-engine";
   }
   return false;
 }

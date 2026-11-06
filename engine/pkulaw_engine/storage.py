@@ -2042,22 +2042,23 @@ class TaskStore:
                     continue
                 candidate = Path(value).resolve(strict=False)
                 if os.path.normcase(str(candidate)) == requested and candidate.is_file():
-                    return candidate
+                    return Path(value)
         artifact_rows = self.connection.execute(
             "SELECT path FROM task_artifacts"
         ).fetchall()
         for row in artifact_rows:
             candidate = Path(row["path"]).resolve(strict=False)
             if os.path.normcase(str(candidate)) == requested and candidate.is_file():
-                return candidate
+                return Path(row["path"])
         return None
 
     def resolve_task_output(self, task_id: str) -> Path | None:
         task = self.get_task(task_id)
         if task is None:
             raise ValidationError("TASK_NOT_FOUND", f"task {task_id} was not found")
-        output_dir = Path(str(task.get("outputDir") or "")).resolve(strict=False)
-        if not str(task.get("outputDir") or "") or not output_dir.is_dir():
+        raw = str(task.get("outputDir") or "")
+        output_dir = Path(raw)
+        if not raw or not Path(raw).resolve(strict=False).is_dir():
             raise ValidationError("TASK_OUTPUT_MISSING", "任务输出目录不存在")
         return output_dir
 

@@ -1,5 +1,4 @@
 import { resolve } from "node:path";
-import react from "@vitejs/plugin-react-swc";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 
 export default defineConfig({
@@ -25,7 +24,6 @@ export default defineConfig({
         "@renderer": resolve("src/renderer/src"),
         "@shared": resolve("src/shared")
       }
-    },
-    plugins: [react()]
+    }
   }
 });

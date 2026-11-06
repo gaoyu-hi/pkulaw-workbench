@@ -1057,6 +1057,22 @@ class DocumentAndCatalogContractTests(unittest.TestCase):
         )
 
         sample = next(REAL_WORD_ROOT.glob("*.doc"))
+
+        if sys.platform == "darwin":
+            # macOS has no bundled antiword; the offline fallback is system textutil.
+            with patch.dict(
+                sys.modules,
+                {
+                    "win32com": None,
+                    "win32com.client": None,
+                    "pythoncom": None,
+                },
+            ):
+                text, method = extract_text(sample)
+            self.assertIn("第一条", text)
+            self.assertIn("textutil", method)
+            return
+
         with (
             patch(
                 "pkulaw_engine.processors.documents.shutil.which",
