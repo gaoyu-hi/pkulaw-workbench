@@ -374,6 +374,10 @@ class AdaptiveSingleTaskTests(unittest.TestCase):
             self._run_collect(adapter)
         checkpoint = self.store.get_task(self.task_id)["checkpoint"]
         self.assertGreater(int(checkpoint["combinationCount"]), 2)
+        self.assertGreater(
+            int(checkpoint["progressSnapshot"]["totalUnits"]),
+            2,
+        )
 
     def test_single_v2_range_submits_keyword_once_per_sublibrary(self) -> None:
         adapter = FakeSingleAdapter(
