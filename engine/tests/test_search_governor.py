@@ -59,6 +59,16 @@ class SearchActionGovernorTests(unittest.TestCase):
 
         self.assertEqual(sleeps, [10.0])
 
+    def test_captcha_before_first_action_forces_cooldown(self) -> None:
+        clock = FakeClock(100.0)
+        sleeps: list[float] = []
+        governor = SearchActionGovernor(clock=clock, sleep=sleeps.append)
+
+        self.assertFalse(governor.note_captcha_cleared())
+        governor.before_result_action("keyword-submission")
+
+        self.assertEqual(sleeps, [10.0])
+
     def test_second_captcha_within_five_actions_releases_boundary(self) -> None:
         governor = SearchActionGovernor(
             clock=FakeClock(),

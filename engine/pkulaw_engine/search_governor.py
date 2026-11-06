@@ -37,18 +37,17 @@ class SearchActionGovernor:
         now = float(self.clock())
         wait_seconds = 0.0
 
-        if self._last_completed_at is not None:
-            if (
-                self._captcha_cooldown_until is not None
-                and self._captcha_cooldown_until > now
-            ):
-                wait_seconds = round(self._captcha_cooldown_until - now, 6)
-            else:
-                elapsed = now - self._last_completed_at
-                wait_seconds = round(
-                    max(0.0, self.minimum_interval_seconds - elapsed),
-                    6,
-                )
+        if (
+            self._captcha_cooldown_until is not None
+            and self._captcha_cooldown_until > now
+        ):
+            wait_seconds = round(self._captcha_cooldown_until - now, 6)
+        elif self._last_completed_at is not None:
+            elapsed = now - self._last_completed_at
+            wait_seconds = round(
+                max(0.0, self.minimum_interval_seconds - elapsed),
+                6,
+            )
 
         if wait_seconds > 0:
             self.sleep(wait_seconds)
