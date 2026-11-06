@@ -40,6 +40,7 @@ import {
   derivePrimaryTaskAction,
   progressSnapshotView,
   retryActionLabel,
+  secondaryStopLabel,
   stageLabel
 } from "./task-presentation";
 import {
@@ -678,7 +679,8 @@ export default function SingleCollectorPanel({
       } else if (action === "continueBoundary") {
         setDetails(
           (await window.pkulaw.continueCaptureBoundary(
-            selectedTaskId
+            selectedTaskId,
+            newOperationId()
           )) as TaskDetails
         );
         setNotice("已确认完整补采，任务只处理尚未完成的年份和省份。");
@@ -1020,7 +1022,9 @@ export default function SingleCollectorPanel({
                       disabled={busy}
                       onClick={() => void control("stop")}
                     >
-                      {details.task.status === "stopping" ? "正在停止" : "停止"}
+                      {details.task.status === "stopping"
+                        ? "正在停止"
+                        : secondaryStopLabel(details.task)}
                     </button>
                   )}
                   {primaryAction === "page-limit" && (

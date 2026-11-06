@@ -178,6 +178,7 @@ class AdaptiveSearchIntegrationTests(unittest.TestCase):
             adaptive["boundary"]["completedPolicyCount"],
             0,
         )
+        self.assertEqual(len(self.store.list_task_batches(self.task_id)), 0)
 
         manager.continue_capture_boundary(self.task_id)
         after = self.store.get_task(self.task_id)

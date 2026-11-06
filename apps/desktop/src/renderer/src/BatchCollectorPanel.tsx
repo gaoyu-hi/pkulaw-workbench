@@ -47,6 +47,7 @@ import {
   derivePrimaryTaskAction,
   progressSnapshotView,
   retryActionLabel,
+  secondaryStopLabel,
   stageLabel
 } from "./task-presentation";
 import {
@@ -661,7 +662,8 @@ export default function BatchCollectorPanel({
       } else if (action === "continueBoundary") {
         setDetails(
           (await window.pkulaw.continueCaptureBoundary(
-            selectedTaskId
+            selectedTaskId,
+            newOperationId()
           )) as BatchTaskDetails
         );
         setNotice("已确认完整补采，任务只处理尚未完成的年份和省份。");
@@ -929,7 +931,11 @@ export default function BatchCollectorPanel({
                     <button type="button" className="primary-button compact" disabled={busy} onClick={() => void control("resume")}>继续</button>
                   )}
                   {actionPolicy.stop && (
-                    <button type="button" className="secondary-button" disabled={busy} onClick={() => void control("stop")}>停止</button>
+                    <button type="button" className="secondary-button" disabled={busy} onClick={() => void control("stop")}>
+                      {details.task.status === "stopping"
+                        ? "正在停止"
+                        : secondaryStopLabel(details.task)}
+                    </button>
                   )}
                   {primaryAction === "page-limit" && (
                     <button type="button" className="primary-button compact" disabled={busy} onClick={() => void control("continueToLast")}>继续到尾页</button>

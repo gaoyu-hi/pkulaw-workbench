@@ -1109,6 +1109,12 @@ export function processingActions(
   };
 }
 
+export function secondaryStopLabel(task: TaskRecord | null): string {
+  return String(task?.error?.code || "") === "CAPTURE_BOUNDARY_REACHED"
+    ? "保留已完成结果并结束"
+    : "停止";
+}
+
 export function collectionActions(
   task: TaskRecord | null,
   options: {

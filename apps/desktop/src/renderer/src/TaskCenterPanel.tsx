@@ -34,6 +34,7 @@ import {
   collectionActions,
   progressSnapshotView,
   retryActionLabel,
+  secondaryStopLabel,
   stageLabel
 } from "./task-presentation";
 
@@ -369,7 +370,10 @@ export default function TaskCenterPanel({
           await window.pkulaw.continueSingleToLast(selectedTask.id);
         }
         if (action === "continueBoundary") {
-          await window.pkulaw.continueCaptureBoundary(selectedTask.id);
+          await window.pkulaw.continueCaptureBoundary(
+            selectedTask.id,
+            newOperationId()
+          );
         }
         if (action === "retry") await window.pkulaw.retrySingleTask(selectedTask.id, operationId);
       } else {
@@ -382,7 +386,10 @@ export default function TaskCenterPanel({
           await window.pkulaw.continueBatchToLast(selectedTask.id);
         }
         if (action === "continueBoundary") {
-          await window.pkulaw.continueCaptureBoundary(selectedTask.id);
+          await window.pkulaw.continueCaptureBoundary(
+            selectedTask.id,
+            newOperationId()
+          );
         }
         if (action === "confirmScale") {
           await window.pkulaw.confirmBatchScale(selectedTask.id);
@@ -712,7 +719,7 @@ export default function TaskCenterPanel({
                   {actionPolicy.continueToLast && <button className="primary-button compact" type="button" disabled={busy} onClick={() => void runTaskAction("continueToLast")}>继续到尾页</button>}
                   {actionPolicy.confirmScale && <button className="primary-button compact" type="button" disabled={busy} onClick={() => void runTaskAction("confirmScale")}>确认规模并继续</button>}
                   {actionPolicy.continueCaptureBoundary && <button className="primary-button compact" type="button" disabled={busy} onClick={() => void runTaskAction("continueBoundary")}>继续完整补采</button>}
-                  {actionPolicy.stop && <button className="secondary-button" type="button" disabled={busy} onClick={() => void runTaskAction("stop")}>停止</button>}
+                  {actionPolicy.stop && <button className="secondary-button" type="button" disabled={busy} onClick={() => void runTaskAction("stop")}>{secondaryStopLabel(selectedTask)}</button>}
                   {actionPolicy.retry && <button className="secondary-button" type="button" disabled={busy || browserLeaseBlocked} onClick={() => void runTaskAction("retry")}>{retryActionLabel(selectedTask)}</button>}
                   <button className="secondary-button" type="button" onClick={() => void openOutput()}>打开输出目录</button>
                   {!selectedTask.archivedAt && !activeStatuses.has(selectedTask.status) && (

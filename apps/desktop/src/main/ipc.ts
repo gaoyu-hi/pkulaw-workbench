@@ -309,11 +309,12 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
   });
   ipcMain.handle(
     "tasks:continue-capture-boundary",
-    async (_event, taskId: unknown) => {
+    async (_event, taskId: unknown, operationId: unknown) => {
       const result = await pythonService.request(
         "task.continue-capture-boundary",
         {
-          taskId: assertTaskId(taskId)
+          taskId: assertTaskId(taskId),
+          operationId: requiredOperationId(operationId)
         }
       );
       return result as unknown as TaskDetails | BatchTaskDetails;

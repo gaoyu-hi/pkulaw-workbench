@@ -15,6 +15,7 @@ import {
   progressSnapshotView,
   retryActionLabel,
   searchSessionView,
+  secondaryStopLabel,
   stageLabel,
   taskFailureView,
   workflowSteps
@@ -377,6 +378,19 @@ describe("task presentation", () => {
         { code: "CAPTURE_BOUNDARY_REACHED", message: "" }
       )?.kind
     ).toBe("boundary");
+  });
+
+  it("labels the boundary stop action distinctly", () => {
+    const boundaryTask = task({
+      status: "waiting_manual",
+      error: {
+        code: "CAPTURE_BOUNDARY_REACHED",
+        message: "platform boundary"
+      }
+    });
+    expect(secondaryStopLabel(boundaryTask)).toBe("保留已完成结果并结束");
+    expect(secondaryStopLabel(task({ status: "running" }))).toBe("停止");
+    expect(secondaryStopLabel(null)).toBe("停止");
   });
 
   it("keeps pause, resume and stop buttons mutually sensible", () => {

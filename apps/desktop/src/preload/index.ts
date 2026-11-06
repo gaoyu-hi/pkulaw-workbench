@@ -124,10 +124,11 @@ const api: DesktopApi = {
     ipcRenderer.invoke("batch:continue-to-last", taskId) as Promise<BatchTaskDetails>,
   confirmBatchScale: (taskId: string) =>
     ipcRenderer.invoke("batch:confirm-scale", taskId) as Promise<BatchTaskDetails>,
-  continueCaptureBoundary: (taskId: string) =>
+  continueCaptureBoundary: (taskId: string, operationId: string) =>
     ipcRenderer.invoke(
       "tasks:continue-capture-boundary",
-      taskId
+      taskId,
+      operationId
     ) as Promise<TaskDetails | BatchTaskDetails>,
   retryBatchTask: (taskId: string, operationId?: string) =>
     ipcRenderer.invoke("batch:retry", taskId, operationId) as Promise<BatchTaskDetails>,
