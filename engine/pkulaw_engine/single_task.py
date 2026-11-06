@@ -910,6 +910,9 @@ class SingleTaskManager:
             )
             boundary_payload = exc.boundary.to_checkpoint()
             checkpoint["adaptiveSearch"] = {
+                **(
+                    dict(getattr(exc, "adaptive_search", None) or {})
+                ),
                 **(checkpoint.get("adaptiveSearch") or {}),
                 "fallbackMode": "A",
                 "boundary": boundary_payload,
@@ -1332,8 +1335,11 @@ class SingleTaskManager:
                         adapter=adapter,
                         combination=combination,
                         governor=governor,
+                        adaptive_scope_states=adaptive_scope_states,
                         completed_policy_count=(
-                            self._adaptive_completed_policy_count(year_stats)
+                            self._adaptive_completed_policy_count(
+                                rows_by_identity
+                            )
                         ),
                     )
                 else:
@@ -1468,38 +1474,48 @@ class SingleTaskManager:
                     combination.action_kind == "year-filter-switch"
                     and adaptive_truncated
                 ):
-                    raise CaptureBoundaryRequired(
-                        CaptureBoundary(
-                            reason="单年结果仍超过来源可访问窗口",
-                            query=query,
-                            library=library,
-                            year=year,
-                            province=(
-                                combination.province
-                                or config.province_for(library)
-                            ),
-                            completed_policy_count=(
-                                self._adaptive_completed_policy_count(
-                                    year_stats
-                                )
-                            ),
-                            remaining_scopes=(
-                                {
-                                    "query": query,
-                                    "library": library,
-                                    "year": year,
-                                    "province": (
-                                        combination.province
-                                        or config.province_for(library)
-                                    ),
-                                },
-                            ),
-                            estimated_result_operations=1,
-                            detected_at=time.strftime(
-                                "%Y-%m-%dT%H:%M:%SZ",
-                                time.gmtime(),
-                            ),
+                    boundary = CaptureBoundary(
+                        reason="单年结果仍超过来源可访问窗口",
+                        query=query,
+                        library=library,
+                        year=year,
+                        province=(
+                            combination.province
+                            or config.province_for(library)
+                        ),
+                        completed_policy_count=(
+                            self._adaptive_completed_policy_count(
+                                rows_by_identity
+                            )
+                        ),
+                        remaining_scopes=(
+                            {
+                                "query": query,
+                                "library": library,
+                                "year": year,
+                                "province": (
+                                    combination.province
+                                    or config.province_for(library)
+                                ),
+                            },
+                        ),
+                        estimated_result_operations=1,
+                        detected_at=time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ",
+                            time.gmtime(),
+                        ),
+                    )
+                    adaptive_search = (
+                        self._build_adaptive_search_checkpoint(
+                            config=config,
+                            governor=governor,
+                            adaptive_scope_states=adaptive_scope_states,
+                            boundary=boundary.to_checkpoint(),
                         )
+                    )
+                    raise CaptureBoundaryRequired(
+                        boundary,
+                        adaptive_search=adaptive_search,
                     )
             self._safe_boundary(
                 store,
@@ -2399,41 +2415,14 @@ class SingleTaskManager:
         current_task = store.get_task(task_id)
         adaptive_checkpoint: dict[str, Any] = {}
         if adaptive_mode:
-            completed_years: set[str] = set()
-            missing_years: set[str] = set()
-            for (scope_query, scope_library), scope_state in (
-                adaptive_scope_states.items()
-            ):
-                scope_plan = plan_adaptive_years(
-                    config.year_selection,
-                    scope_state.get("entries") or [],
-                    scope_state.get("collected") or {},
-                    query=scope_query,
-                    library=scope_library,
+            adaptive_checkpoint = (
+                self._build_adaptive_search_checkpoint(
+                    config=config,
+                    governor=governor,
+                    adaptive_scope_states=adaptive_scope_states,
+                    boundary=adaptive_boundary or None,
                 )
-                completed_years.update(scope_plan.completed_years)
-                missing_years.update(scope_plan.missing_years)
-            adaptive_checkpoint = {
-                "keywordSubmissions": int(
-                    governor.snapshot()["keyword_submissions"]
-                )
-                if governor is not None
-                else 0,
-                "yearFilterSwitches": int(
-                    governor.snapshot()["year_filter_switches"]
-                )
-                if governor is not None
-                else 0,
-                "captchaWaits": int(
-                    governor.snapshot()["captcha_waits"]
-                )
-                if governor is not None
-                else 0,
-                "completedYears": sorted(completed_years),
-                "missingYears": sorted(missing_years),
-                "fallbackMode": "A" if adaptive_boundary else "C",
-                "boundary": adaptive_boundary,
-            }
+            )
         self._safe_boundary(
             store,
             controller,
@@ -2503,12 +2492,51 @@ class SingleTaskManager:
 
     @staticmethod
     def _adaptive_completed_policy_count(
-        year_stats: dict[str, dict[str, Any]],
+        rows_by_identity: dict[str, dict[str, Any]],
     ) -> int:
-        return sum(
-            max(0, int(item.get("rowsAccepted") or 0))
-            for item in year_stats.values()
-        )
+        return len(rows_by_identity)
+
+    def _build_adaptive_search_checkpoint(
+        self,
+        *,
+        config: SingleTaskConfig,
+        governor: SearchActionGovernor | None,
+        adaptive_scope_states: dict[
+            tuple[str, str],
+            dict[str, Any],
+        ],
+        boundary: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        completed_years: set[str] = set()
+        missing_years: set[str] = set()
+        for (scope_query, scope_library), scope_state in (
+            adaptive_scope_states.items()
+        ):
+            scope_plan = plan_adaptive_years(
+                config.year_selection,
+                scope_state.get("entries") or [],
+                scope_state.get("collected") or {},
+                query=scope_query,
+                library=scope_library,
+            )
+            completed_years.update(scope_plan.completed_years)
+            missing_years.update(scope_plan.missing_years)
+        snapshot = governor.snapshot() if governor is not None else {}
+        return {
+            "keywordSubmissions": int(
+                snapshot.get("keyword_submissions") or 0
+            ),
+            "yearFilterSwitches": int(
+                snapshot.get("year_filter_switches") or 0
+            ),
+            "captchaWaits": int(
+                snapshot.get("captcha_waits") or 0
+            ),
+            "completedYears": sorted(completed_years),
+            "missingYears": sorted(missing_years),
+            "fallbackMode": "A" if boundary else "C",
+            "boundary": boundary,
+        }
 
     def _append_adaptive_missing_year_combinations(
         self,
@@ -2547,6 +2575,10 @@ class SingleTaskManager:
         adapter: PkulawAdapter,
         combination: SearchCombination,
         governor: SearchActionGovernor | None,
+        adaptive_scope_states: dict[
+            tuple[str, str],
+            dict[str, Any],
+        ],
         completed_policy_count: int = 0,
     ) -> dict[str, Any]:
         if governor is None:
@@ -2630,30 +2662,42 @@ class SingleTaskManager:
                 if captcha_detected:
                     released = governor.note_captcha_cleared()
                     if released:
-                        raise CaptureBoundaryRequired(
-                            CaptureBoundary(
-                                reason="重复验证码，进入采集边界确认",
-                                query=combination.query,
-                                library=combination.library,
-                                year=combination.year,
-                                province=province,
-                                completed_policy_count=(
-                                    completed_policy_count
+                        boundary = CaptureBoundary(
+                            reason="重复验证码，进入采集边界确认",
+                            query=combination.query,
+                            library=combination.library,
+                            year=combination.year,
+                            province=province,
+                            completed_policy_count=(
+                                completed_policy_count
+                            ),
+                            remaining_scopes=(
+                                {
+                                    "query": combination.query,
+                                    "library": combination.library,
+                                    "year": combination.year,
+                                    "province": province,
+                                },
+                            ),
+                            estimated_result_operations=1,
+                            detected_at=time.strftime(
+                                "%Y-%m-%dT%H:%M:%SZ",
+                                time.gmtime(),
+                            ),
+                        )
+                        adaptive_search = (
+                            self._build_adaptive_search_checkpoint(
+                                config=config,
+                                governor=governor,
+                                adaptive_scope_states=(
+                                    adaptive_scope_states
                                 ),
-                                remaining_scopes=(
-                                    {
-                                        "query": combination.query,
-                                        "library": combination.library,
-                                        "year": combination.year,
-                                        "province": province,
-                                    },
-                                ),
-                                estimated_result_operations=1,
-                                detected_at=time.strftime(
-                                    "%Y-%m-%dT%H:%M:%SZ",
-                                    time.gmtime(),
-                                ),
+                                boundary=boundary.to_checkpoint(),
                             )
+                        )
+                        raise CaptureBoundaryRequired(
+                            boundary,
+                            adaptive_search=adaptive_search,
                         )
                 request = adapter.current_search_request
                 session = adapter.current_search_session

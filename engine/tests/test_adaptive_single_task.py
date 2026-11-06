@@ -375,6 +375,17 @@ class AdaptiveSingleTaskTests(unittest.TestCase):
             [ALL_YEARS, ALL_YEARS],
         )
         self.assertEqual(adapter.select_year_calls, [])
+        adaptive = self.store.get_task(self.task_id)["checkpoint"][
+            "adaptiveSearch"
+        ]
+        self.assertEqual(adaptive["keywordSubmissions"], 0)
+        self.assertEqual(adaptive["yearFilterSwitches"], 0)
+        self.assertEqual(adaptive["captchaWaits"], 0)
+        self.assertEqual(
+            sorted(adaptive["completedYears"]),
+            ["2022", "2023"],
+        )
+        self.assertEqual(adaptive["missingYears"], [])
 
     def test_single_v2_range_switches_missing_years_without_resubmit(self) -> None:
         adapter = FakeSingleAdapter(
@@ -404,6 +415,14 @@ class AdaptiveSingleTaskTests(unittest.TestCase):
         self.assertTrue(
             all(call["year"] != ALL_YEARS for call in adapter.search_calls[2:])
         )
+        adaptive = self.store.get_task(self.task_id)["checkpoint"][
+            "adaptiveSearch"
+        ]
+        self.assertIn("keywordSubmissions", adaptive)
+        self.assertIn("yearFilterSwitches", adaptive)
+        self.assertIn("captchaWaits", adaptive)
+        self.assertIn("completedYears", adaptive)
+        self.assertIn("missingYears", adaptive)
 
     def test_single_v2_captcha_after_success_does_not_resubmit(self) -> None:
         adapter = CaptchaReuseSingleAdapter()
@@ -446,28 +465,42 @@ class AdaptiveSingleTaskTests(unittest.TestCase):
             ],
             truncated_year="2023",
         )
-        with mock.patch(
-            "pkulaw_engine.single_task.SearchActionGovernor",
-            return_value=SimpleNamespace(
-                before_result_action=lambda _kind: None,
-                after_result_action=lambda *a, **k: None,
-                note_captcha_cleared=lambda *a, **k: False,
-                snapshot=lambda: {
-                    "keyword_submissions": 0,
-                    "year_filter_switches": 0,
-                    "captcha_waits": 0,
-                    "released_to_boundary": False,
-                },
+        with (
+            mock.patch(
+                "pkulaw_engine.single_task.SearchActionGovernor",
+                return_value=SimpleNamespace(
+                    before_result_action=lambda _kind: None,
+                    after_result_action=lambda *a, **k: None,
+                    note_captcha_cleared=lambda *a, **k: False,
+                    snapshot=lambda: {
+                        "keyword_submissions": 0,
+                        "year_filter_switches": 0,
+                        "captcha_waits": 0,
+                        "released_to_boundary": False,
+                    },
+                ),
             ),
+            self.assertRaises(CaptureBoundaryRequired) as raised,
         ):
-            with self.assertRaises(CaptureBoundaryRequired):
-                self._run_collect(adapter)
+            self._run_collect(adapter)
         checkpoint = self.store.get_task(self.task_id)["checkpoint"]
         accepted = sum(
             max(0, int(item.get("rowsAccepted") or 0))
             for item in checkpoint.get("yearStats") or []
         )
         self.assertGreater(accepted, 0)
+        self.assertEqual(
+            raised.exception.boundary.completed_policy_count,
+            4,
+        )
+        self.assertIn(
+            "completedYears",
+            raised.exception.adaptive_search,
+        )
+        self.assertIn(
+            "missingYears",
+            raised.exception.adaptive_search,
+        )
 
 
 if __name__ == "__main__":

@@ -39,12 +39,19 @@ class CaptureBoundary:
 class CaptureBoundaryRequired(RuntimeError):
     code = "CAPTURE_BOUNDARY_REACHED"
 
-    def __init__(self, boundary: CaptureBoundary) -> None:
+    def __init__(
+        self,
+        boundary: CaptureBoundary,
+        *,
+        adaptive_search: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(boundary.reason)
         self.boundary = boundary
+        self.adaptive_search = dict(adaptive_search or {})
 
     def to_checkpoint(self) -> dict[str, Any]:
         return {
             "code": self.code,
             "boundary": self.boundary.to_checkpoint(),
+            **({"adaptiveSearch": dict(self.adaptive_search)} if self.adaptive_search else {}),
         }
