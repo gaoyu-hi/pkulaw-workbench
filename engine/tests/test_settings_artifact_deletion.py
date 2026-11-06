@@ -281,6 +281,55 @@ class SettingsArtifactDeletionTests(unittest.TestCase):
         self.assertEqual(cleanup_reason, "OUTSIDE_TASK_OUTPUT")
         self.assertEqual(settings_reason, cleanup_reason)
 
+    def test_registered_file_without_output_directory_is_protected(
+        self,
+    ) -> None:
+        orphan = self.root / "orphan.txt"
+        orphan.write_text("orphan", encoding="utf-8")
+        task = self.store.create_task(
+            name="无输出目录任务",
+            mode="single",
+            task_input={},
+            output_dir="",
+        )
+        self.store.upsert_processing_run(
+            "run-orphan",
+            task["id"],
+            status="completed",
+            progress=1.0,
+            current_stage="completed",
+        )
+        self.store.add_task_artifact(
+            task["id"],
+            "run-orphan",
+            kind="orphan",
+            path=str(orphan),
+        )
+        self.store.update_task(
+            task["id"],
+            status="paused",
+            current_stage="paused",
+        )
+
+        preview = self.store.settings_artifact_preview(task["id"])
+        protected = {
+            item["path"] for item in preview["protectedFiles"]
+        }
+        self.assertIn(str(orphan.resolve()), protected)
+        self.assertEqual(
+            preview["artifactSummary"]["protectedFileCount"],
+            1,
+        )
+
+        deleted = self.store.permanently_delete_task_outputs(task["id"])
+        self.assertEqual(deleted["deletedFiles"], [])
+        self.assertEqual(deleted["freedBytes"], 0)
+        self.assertTrue(orphan.exists())
+        self.assertEqual(
+            {item["path"] for item in deleted["protectedFiles"]},
+            {str(orphan.resolve())},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

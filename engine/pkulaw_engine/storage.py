@@ -909,7 +909,9 @@ class TaskStore:
             return "PROTECTED_ROOT"
         if resolved == database_parent or resolved == database_file:
             return "PROTECTED_DATA_DIRECTORY"
-        if output_roots and not any(
+        if not output_roots:
+            return "OUTSIDE_TASK_OUTPUT"
+        if not any(
             self._path_within(resolved, root) for root in output_roots
         ):
             return "OUTSIDE_TASK_OUTPUT"
