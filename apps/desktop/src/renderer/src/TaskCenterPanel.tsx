@@ -563,7 +563,7 @@ export default function TaskCenterPanel({
       <div className="task-center-header panel">
         <div>
           <span className="eyebrow">
-            {appInfo?.version || "0.2.5"} · 统一任务中心
+            {appInfo?.version || "0.2.6"} · 统一任务中心
           </span>
           <h2>{scope === "archive" ? "回收站与任务恢复" : "任务状态、失败原因与恢复入口"}</h2>
           <p>逐篇和批量共享筛选、详情、回收站、恢复与产物治理。</p>

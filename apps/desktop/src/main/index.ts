@@ -1000,14 +1000,14 @@ function setLogicalContentSize(
   width: number,
   height: number
 ): void {
+  if (window.isFullScreen()) {
+    window.setFullScreen(false);
+  }
+  if (window.isMaximized()) {
+    window.unmaximize();
+  }
   window.webContents.setZoomFactor(1);
-  const [contentWidth, contentHeight] = window.getContentSize();
-  const [windowWidth, windowHeight] = window.getSize();
-  window.setSize(
-    width + windowWidth - contentWidth,
-    height + windowHeight - contentHeight,
-    false
-  );
+  window.setContentSize(width, height, false);
   const [actualContentWidth, actualContentHeight] =
     window.getContentSize();
   if (actualContentWidth <= 0 || actualContentHeight <= 0) {
@@ -5150,8 +5150,8 @@ async function runStage6Smoke(
 
     const diagnostics = await runDiagnostics(appInfo, service, browserHost);
     if (
-      appInfo.version !== "0.2.5" ||
-      service.getState().engineVersion !== "0.2.5"
+      appInfo.version !== "0.2.6" ||
+      service.getState().engineVersion !== "0.2.6"
     ) {
       throw new Error(
         `Application/backend version mismatch: ${appInfo.version}/${service.getState().engineVersion}`
